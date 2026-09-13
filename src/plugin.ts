@@ -3,7 +3,7 @@
  *
  * Lets consumers register the directive globally with one line:
  *
- *   import { TeleportToPlugin } from 'v-teleport-to'
+ *   import { TeleportToPlugin } from '@ozjsey/v-teleport-to'
  *   app.use(TeleportToPlugin)
  *
  * The directive is registered under the kebab-case name `teleport-to`, so
