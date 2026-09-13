@@ -1,4 +1,8 @@
-# v-teleport-to
+# @ozjsey/v-teleport-to
+
+## Playground
+
+Try the live examples in the [npm portfolio playground](https://github.com/ozJSey/npm-portfolio-playground).
 
 Vue 3 directive for viewport-aware fixed positioning relative to a reference element.  
 Escapes all overflow/clip containers — perfect for dropdowns, popovers, and autocomplete lists.
@@ -6,7 +10,7 @@ Escapes all overflow/clip containers — perfect for dropdowns, popovers, and au
 ## Install
 
 ```bash
-npm install v-teleport-to
+npm install @ozjsey/v-teleport-to
 ```
 
 ## Register
@@ -15,7 +19,7 @@ npm install v-teleport-to
 
 ```ts
 import { createApp } from 'vue'
-import { TeleportToPlugin } from 'v-teleport-to'
+import { TeleportToPlugin } from '@ozjsey/v-teleport-to'
 
 const app = createApp(App)
 app.use(TeleportToPlugin)
@@ -29,7 +33,7 @@ The plugin registers the directive globally under the kebab-case name
 
 ```ts
 import { createApp } from 'vue'
-import { vTeleportTo } from 'v-teleport-to'
+import { vTeleportTo } from '@ozjsey/v-teleport-to'
 
 const app = createApp(App)
 app.directive('teleport-to', vTeleportTo)
@@ -40,7 +44,7 @@ app.mount('#app')
 
 ```vue
 <script setup lang="ts">
-import { vTeleportTo } from 'v-teleport-to'
+import { vTeleportTo } from '@ozjsey/v-teleport-to'
 </script>
 ```
 
@@ -57,7 +61,7 @@ import { vTeleportTo } from 'v-teleport-to'
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { vTeleportTo } from 'v-teleport-to'
+import { vTeleportTo } from '@ozjsey/v-teleport-to'
 
 const trigger = ref<HTMLElement>()
 const open = ref(false)
@@ -130,7 +134,7 @@ first tick. Watch the reference from something that outlives the host:
 ```vue
 <script setup lang="ts">
 import { ref, useTemplateRef } from 'vue'
-import { useTeleportTo } from 'v-teleport-to'
+import { useTeleportTo } from '@ozjsey/v-teleport-to'
 
 const trigger = useTemplateRef<HTMLElement>('trigger')
 const host = useTemplateRef<HTMLElement>('host')
@@ -332,7 +336,7 @@ via `:style`:
 ```vue
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useTeleportTo } from 'v-teleport-to'
+import { useTeleportTo } from '@ozjsey/v-teleport-to'
 
 const trigger = ref<HTMLElement>()
 const open = ref(false)
@@ -409,7 +413,7 @@ import type {
   TeleportToEventDetail,
   TeleportToFit,
   TeleportToSide,
-} from 'v-teleport-to'
+} from '@ozjsey/v-teleport-to'
 ```
 
 ## Architecture

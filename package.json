@@ -1,5 +1,5 @@
 {
-  "name": "v-teleport-to",
+  "name": "@ozjsey/v-teleport-to",
   "version": "3.0.0",
   "description": "Vue 3 directive for viewport-aware fixed positioning relative to a reference element — escapes overflow containers",
   "author": "Ozgur Seyidoglu",
@@ -57,5 +57,8 @@
     "vitest": "^2.0.0",
     "vue": "^3.5.0",
     "vue3_3": "npm:vue@^3.3.13"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
