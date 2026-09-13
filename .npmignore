@@ -1,0 +1,27 @@
+# Defense-in-depth alongside `files` field in package.json.
+# Even if `files` is removed, only README, LICENSE, package.json, and dist/ ship.
+
+# Source / tests / configs
+src/
+*.test.ts
+vTeleportTo.ts
+vitest.config.ts
+tsconfig.json
+
+# Local CRON-loop logs (not for consumers)
+PROGRESS.md
+TASKS.md
+ARCHITECTURE.md
+FEATURES.md
+FINDINGS.md
+NOTES.md
+
+# Demo / scratch
+playground.html
+
+# Tooling
+node_modules/
+*.tsbuildinfo
+.vscode/
+.idea/
+.DS_Store

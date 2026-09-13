@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>v-teleport-to Playground</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; color: #1a1a2e; background: #f0f0f5; }
+
+    .header {
+      position: sticky; top: 0; z-index: 100;
+      background: #1a1a2e; color: white;
+      padding: 16px 24px;
+    }
+    .header h1 { font-size: 20px; font-weight: 600; }
+    .header p  { font-size: 13px; opacity: 0.7; margin-top: 4px; }
+
+    .scroll-container {
+      max-height: 300px; overflow: auto;
+      border: 2px dashed #c0c0d0; border-radius: 8px;
+      margin: 24px; padding: 16px;
+      background: white;
+    }
+    .scroll-container h3 { margin-bottom: 8px; font-size: 14px; color: #555; }
+
+    .filler { height: 200px; background: repeating-linear-gradient(180deg, #fafafe 0, #fafafe 24px, #f0f0f5 24px, #f0f0f5 25px); }
+
+    .trigger-row {
+      display: flex; gap: 24px; align-items: flex-start;
+      flex-wrap: wrap; padding: 24px;
+    }
+
+    .trigger-wrapper {
+      position: relative;
+      display: inline-block;
+    }
+
+    .trigger-btn {
+      padding: 10px 20px; border-radius: 6px;
+      border: 1px solid #ccc; background: white;
+      cursor: pointer; font-size: 14px;
+      transition: box-shadow 0.15s;
+    }
+    .trigger-btn:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+    .trigger-btn:focus { outline: 2px solid #4361ee; outline-offset: 2px; }
+
+    .dropdown {
+      display: none;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .dropdown.open { display: block; }
+    .dropdown-item {
+      padding: 10px 16px; font-size: 14px;
+      cursor: pointer; transition: background 0.1s;
+    }
+    .dropdown-item:hover { background: #eef0ff; }
+
+    .spacer { height: 600px; background: repeating-linear-gradient(180deg, #fafafe 0, #fafafe 39px, #eee 39px, #eee 40px); margin: 24px; border-radius: 8px; }
+
+    .info-bar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: #1a1a2e; color: #ccc; padding: 8px 24px;
+      font-size: 12px; z-index: 9999;
+    }
+    .info-bar span { color: #4cc9f0; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="header">
+      <h1>v-teleport-to Playground</h1>
+      <p>Dropdowns escape overflow containers using fixed positioning</p>
+    </div>
+
+    <!-- CASE 1 — Inside a scrollable overflow container -->
+    <div class="scroll-container">
+      <h3>Inside overflow:auto container</h3>
+      <div class="filler"></div>
+      <div class="trigger-wrapper">
+        <button class="trigger-btn" ref="refOverflow" @click="toggleOverflow">
+          Open dropdown (overflow)
+        </button>
+      </div>
+      <div class="filler"></div>
+    </div>
+
+    <div
+      v-teleport-to="{ to: $refs.refOverflow, maxHeight: 200 }"
+      class="dropdown"
+      :class="{ open: overflowOpen }"
+      @teleport-positioned="onPos('overflow', $event)"
+    >
+      <div class="dropdown-item" v-for="i in 10" :key="i">Overflow item {{ i }}</div>
+    </div>
+
+    <!-- CASE 2 — Regular dropdown row -->
+    <div class="trigger-row">
+      <div class="trigger-wrapper">
+        <button class="trigger-btn" ref="refBasic" @click="toggleBasic">Basic dropdown</button>
+      </div>
+      <div class="trigger-wrapper">
+        <button class="trigger-btn" ref="refMatch" @click="toggleMatch">matchWidth dropdown</button>
+      </div>
+      <div class="trigger-wrapper">
+        <button class="trigger-btn" ref="refForceTop" @click="toggleForceTop">placement: top</button>
+      </div>
+    </div>
+
+    <div
+      v-teleport-to="{ to: $refs.refBasic }"
+      class="dropdown"
+      :class="{ open: basicOpen }"
+      @teleport-positioned="onPos('basic', $event)"
+    >
+      <div class="dropdown-item" v-for="i in 8" :key="i">Basic item {{ i }}</div>
+    </div>
+
+    <div
+      v-teleport-to="{ to: $refs.refMatch, matchWidth: true }"
+      class="dropdown"
+      :class="{ open: matchOpen }"
+    >
+      <div class="dropdown-item" v-for="i in 5" :key="i">Match-width item {{ i }}</div>
+    </div>
+
+    <div
+      v-teleport-to="{ to: $refs.refForceTop, placement: 'top' }"
+      class="dropdown"
+      :class="{ open: forceTopOpen }"
+    >
+      <div class="dropdown-item" v-for="i in 6" :key="i">Forced-top item {{ i }}</div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="info-bar">
+      Last positioned: <span>{{ lastPos }}</span>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script type="module">
+    // Load the published library from the built ESM artifact (no bundler needed).
+    // This is the exact bytes consumers get from `import 'v-teleport-to'`.
+    import { TeleportToPlugin } from './dist/vTeleportTo.min.js';
+
+    const { createApp, ref } = Vue;
+    createApp({
+      setup() {
+        const overflowOpen = ref(false), basicOpen = ref(false),
+              matchOpen = ref(false), forceTopOpen = ref(false);
+        const lastPos = ref('none');
+        const close = () => { overflowOpen.value = basicOpen.value = matchOpen.value = forceTopOpen.value = false; };
+        return {
+          overflowOpen, basicOpen, matchOpen, forceTopOpen, lastPos,
+          toggleOverflow() { const v = !overflowOpen.value; close(); overflowOpen.value = v; },
+          toggleBasic()    { const v = !basicOpen.value;    close(); basicOpen.value = v; },
+          toggleMatch()    { const v = !matchOpen.value;    close(); matchOpen.value = v; },
+          toggleForceTop() { const v = !forceTopOpen.value; close(); forceTopOpen.value = v; },
+          onPos(name, e) { lastPos.value = `${name} -> ${e.detail.placement} (${e.detail.maxHeight}px)`; },
+        };
+      },
+    })
+    .use(TeleportToPlugin)
+    .mount('#app');
+  </script>
+</body>
+</html>
