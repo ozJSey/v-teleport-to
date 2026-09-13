@@ -108,7 +108,7 @@ skipped (no window fallback)"), so it is recorded rather than changed.
 
 **Reachability of new feature:**
 - README Options table row — documents the override hierarchy + CSS-string trade-off.
-- Type system — `import type { TeleportToOptions } from '@ozjsey/v-teleport-to'` exposes `maxWidth?` with JSDoc.
+- Type system — `import type { TeleportToOptions } from 'v-teleport-to'` exposes `maxWidth?` with JSDoc.
 - Test suite — the executable spec.
 
 **What's next:** P8 has 4 unchecked items: CSP-strict mode via constructable stylesheet, animated open/close playground demo (the data-teleport-state discoverability fix), benchmark micro-suite for scroll throughput, real-browser drift smoke via Playwright (in P7). The animated playground demo is the highest-leverage next pick — pure discoverability for a feature that's shipped but invisible in the playground.
@@ -192,7 +192,7 @@ skipped (no window fallback)"), so it is recorded rather than changed.
 - **Normalize `DOMRectInit` to a full rect at the source.** Acceptance allows `DOMRect | DOMRectInit`; the latter has only `x/y/width/height` (no `right`/`bottom`). Cast `rawRect` to `Partial<DOMRect>` and compute the missing sides (`right = left + width`, `bottom = top + height`). Real `HTMLElement.getBoundingClientRect()` always returns a full `DOMRect`, so this normalization is a no-op there. Avoids sprinkling `?? parentTop + parentHeight` fallbacks throughout the math.
 - **Skip observer attachment for virtual refs.** `ResizeObserver` / `IntersectionObserver` / `MutationObserver` all require a real `Element`. Attempting to observe a synthetic object would throw or silently no-op. Short-circuit in `syncObservers`: if `isVirtualReference(toRef)` → `disconnectObservers(bag); return`. Consumers driving cursor-tracking (the canonical use case) call `update()` themselves on `pointermove` events, so the observer pipeline is irrelevant.
 - **No widening of `arrow` option.** Acceptance is `to`-only. The `arrow` option still requires a real DOM element because the directive needs to detect detachment to clear the CSS vars; a virtual arrow has no detachment signal.
-- **Export `VirtualReference` publicly.** Consumers writing strongly-typed cursor-tracking code want `import type { VirtualReference } from '@ozjsey/v-teleport-to'`. Added to both `src/index.ts` and root `vTeleportTo.ts` re-exports.
+- **Export `VirtualReference` publicly.** Consumers writing strongly-typed cursor-tracking code want `import type { VirtualReference } from 'v-teleport-to'`. Added to both `src/index.ts` and root `vTeleportTo.ts` re-exports.
 
 **TDD pass:**
 - Wrote 8 new tests inside a new `describe('virtualReference (synthetic getBoundingClientRect)', …)` block at the bottom of the existing `describe('scrollContainer option', …)` block (kept the location simple — placed inside the closest containing describe so the file structure stays append-only).
@@ -215,7 +215,7 @@ skipped (no window fallback)"), so it is recorded rather than changed.
 - README Options table `to` row rewritten with the four shapes (HTMLElement / VirtualReference / Ref / getter) + the "skip isConnected check" + "skip autoUpdate observers" + "consumer drives recalcs via update()" semantics.
 - ARCHITECTURE.md `calculate-position.ts` row updated to mention the `isVirtualReference` type guard.
 
-**Reachability:** `import type { VirtualReference } from '@ozjsey/v-teleport-to'`; `v-teleport-to="{ to: { getBoundingClientRect: () => ({ top: y, left: x, width: 0, height: 0 }) } }"` (directive form); `useTeleportTo({ to: virtualRef })` (composable form). Documented under the README Options table.
+**Reachability:** `import type { VirtualReference } from 'v-teleport-to'`; `v-teleport-to="{ to: { getBoundingClientRect: () => ({ top: y, left: x, width: 0, height: 0 }) } }"` (directive form); `useTeleportTo({ to: virtualRef })` (composable form). Documented under the README Options table.
 
 **What's next:** TASKS.md P7 still has three unchecked: `hideWhenReferenceClipped`, playground responsive audit, real-browser drift smoke via Playwright. The playground responsive audit is highest discoverability impact (a feature with no demo is invisible). Pick that next run.
 
@@ -1343,7 +1343,7 @@ Overflow shift/hide gated to vertical placement: the existing `overflow: 'shift'
 
 **Tests:** 18/18 vitest pass. CJS smoke (`node -e "require('./dist/vTeleportTo.min.cjs')"`) confirms `vTeleportTo` and `default` are present. ESM smoke (`node --input-type=module -e "import(...)"`) likewise OK.
 
-**Discoverability:** No public API change. CJS consumers can now `const { vTeleportTo } = require('@ozjsey/v-teleport-to')`; ESM unchanged.
+**Discoverability:** No public API change. CJS consumers can now `const { vTeleportTo } = require('v-teleport-to')`; ESM unchanged.
 
 **Next:** P0 — Publish source maps (`tsup --sourcemap`, ensure `dist/*.map` are emitted and not gitignored from the package tarball).
 

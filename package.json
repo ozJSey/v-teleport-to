@@ -4,9 +4,6 @@
   "description": "Vue 3 directive for viewport-aware fixed positioning relative to a reference element — escapes overflow containers",
   "author": "Ozgur Seyidoglu",
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ozJSey/vue-teleport-to.git"
