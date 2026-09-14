@@ -12,10 +12,6 @@ browser:
 [events + state attributes](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/events-state) ·
 [`useTeleportTo`](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/composable)
 
-## Playground
-
-Try the live examples in the [npm portfolio playground](https://github.com/ozJSey/npm-portfolio-playground).
-
 Vue 3 directive for viewport-aware fixed positioning relative to a reference element.  
 Escapes all overflow/clip containers — perfect for dropdowns, popovers, and autocomplete lists.
 
