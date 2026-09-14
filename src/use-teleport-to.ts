@@ -78,6 +78,30 @@ export type UseTeleportToReturn = {
    */
   collapsed: Ref<boolean>
   /**
+   * Whether the host's content is taller than the `maxHeight` being applied —
+   * the host is not short, it is cut. Mirrors the directive's
+   * `data-teleport-truncated`.
+   *
+   * Separate from `fit` because `fit` cannot carry it: a host clamped by your
+   * own `maxHeight` fits on both sides and is cut on both, so `'fits'` is the
+   * correct answer and a useless one. Always `false` without a host argument —
+   * there is nothing to measure.
+   */
+  truncated: Ref<boolean>
+  /**
+   * The host's own width (px) under this tick's width constraints, with no
+   * side coordinate squeezing it — the number the horizontal fit test used.
+   * `null` when there is no host to measure, or when it has no box even with
+   * the clamp lifted.
+   */
+  contentWidth: Ref<number | null>
+  /**
+   * The host's own height (px) at `contentWidth`, with no `max-height` in the
+   * way — the number the vertical fit test used. `contentHeight > maxHeight`
+   * is exactly `truncated`. `null` on the same terms as `contentWidth`.
+   */
+  contentHeight: Ref<number | null>
+  /**
    * Whether the reference element was fully out of view on the most recent
    * calculation — the raw measurement, reported whether or not
    * `hideWhenReferenceHidden` is on. Bind a `v-if` to this when you want the
@@ -115,6 +139,9 @@ export function useTeleportTo(
   const fit = ref<TeleportToFit>('unmeasured')
   const maxHeight = ref(0)
   const collapsed = ref(false)
+  const truncated = ref(false)
+  const contentWidth = ref<number | null>(null)
+  const contentHeight = ref<number | null>(null)
   const referenceHidden = ref(false)
   const hidden = ref(false)
   // Mirrors the directive's `data-teleport-state`. Initial 'closed' so a
@@ -167,6 +194,9 @@ export function useTeleportTo(
       fit.value = 'unmeasured'
       maxHeight.value = 0
       collapsed.value = false
+      truncated.value = false
+      contentWidth.value = null
+      contentHeight.value = null
       referenceHidden.value = false
       hidden.value = false
       state.value = 'closed'
@@ -184,6 +214,9 @@ export function useTeleportTo(
       // branch releases any hide it applied, so the composable reports the
       // same "not hidden by us" answer rather than a stale `true`.
       collapsed.value = false
+      truncated.value = false
+      contentWidth.value = null
+      contentHeight.value = null
       referenceHidden.value = false
       hidden.value = false
       state.value = 'closed'
@@ -201,6 +234,9 @@ export function useTeleportTo(
     fit.value = result.detail.fit
     maxHeight.value = result.detail.maxHeight
     collapsed.value = result.detail.collapsed
+    truncated.value = result.detail.truncated
+    contentWidth.value = result.detail.contentWidth
+    contentHeight.value = result.detail.contentHeight
     referenceHidden.value = result.detail.referenceHidden
     hidden.value = result.detail.hidden
     state.value = 'open'
@@ -273,6 +309,9 @@ export function useTeleportTo(
     fit,
     maxHeight,
     collapsed,
+    truncated,
+    contentWidth,
+    contentHeight,
     referenceHidden,
     hidden,
     state,

@@ -2,6 +2,16 @@
 
 See in action: [npm portfolio playground](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to).
 
+**Or go straight to the card for the thing you came for** — every one is live, and editable in the
+browser:
+[basic dropdown](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/basic-dropdown) ·
+[placement + flip](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/placement-flip) ·
+[sizing](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/sizing) ·
+[boundary + scrollContainer](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/boundary-scroll) ·
+[arrow](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/arrow) ·
+[events + state attributes](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/events-state) ·
+[`useTeleportTo`](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/composable)
+
 ## Playground
 
 Try the live examples in the [npm portfolio playground](https://github.com/ozJSey/npm-portfolio-playground).
@@ -72,13 +82,19 @@ const open = ref(false)
 
 ## Options
 
+Most of these are a control on a card rather than a paragraph: the fit ladder on
+[placement + flip](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/placement-flip), every width knob and the mobile full-bleed branch on
+[sizing](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/sizing), `boundary` / `scrollContainer` / `hideWhenReferenceHidden` on
+[boundary + scrollContainer](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/boundary-scroll), and `overflow` on
+[overflow](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/overflow). Change them there before you decide which you need.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `to` | `HTMLElement \| VirtualReference \| Ref<…> \| () => …` | **required** | Reference to position relative to. Accepts a plain element, a Vue template ref, a getter, or a **virtual reference** (any object with a `getBoundingClientRect()` method — useful for cursor coords, selection ranges, or any synthetic origin). Resolved every tick — refs/getters that yield `null` initially and are populated later are supported. Virtual refs skip the `isConnected` check and the `autoUpdate` observer attachment; consumers should call `update()` (composable) or trigger a directive update to recalc on cursor/range changes. |
 | `placement` | `'auto' \| 'top' \| 'bottom' \| 'left' \| 'right'` | `'auto'` | Placement preference. `'top'`/`'bottom'` are vertical; `'left'`/`'right'` place the host beside the reference (top-aligned, with the host's near edge anchored to the reference's matching edge). `'auto'` is vertical-only — it prefers the larger of `top`/`bottom`, then applies the same fit test an explicit side gets, so the host lands on a side it fits on when one exists. Every value here is a *preference*, honoured while the host fits; pass `flip: false` to pin it regardless. |
 | `maxHeight` | `number` | `240` | Maximum height in px |
 | `widthMultiplier` | `number` | `1.5` | Width multiplier relative to the reference element. Because it multiplies the *reference's* width, it projects `0` for a **virtual reference** that is a point (`width: 0`) — pass `maxWidth` instead for cursor-anchored menus. |
-| `maxWidth` | `number \| string` | — | Explicit upper bound for the host width. Overrides the default `parentWidth × widthMultiplier` AND the mobile fullbleed (`100vw`, `<768px`) branch. Number → `${n}px`; string → passed through (any CSS width, e.g. `'min(80vw, 400px)'`). `matchWidth: true` wins on conflict (explicit pinning beats explicit clamping). For numeric values, the `overflow: 'shift'` clamp uses the value as the host's effective width; for CSS-string values the shift clamp falls back to `parentWidth × widthMultiplier` (consumers pairing `maxWidth` with `overflow: 'shift'` should pass a number when overflow accuracy matters). `maxWidth: 0` is a valid value and collapses the host — the `min-width: <reference width>` floor yields to it (before 3.0.0 it did not, and every narrowing knob was a no-op). Setting `maxWidth` also opts the host out of the mobile full-bleed branch entirely, anchor included. |
+| `maxWidth` | `number \| string` | — | Explicit upper bound for the host width. Overrides the default `parentWidth × widthMultiplier` AND the mobile fullbleed (`100vw`, `<768px`) branch. Number → `${n}px`; string → passed through (any CSS width, e.g. `'min(80vw, 400px)'`). `matchWidth: true` wins on conflict (explicit pinning beats explicit clamping). For numeric values, the `overflow: 'shift'` clamp uses the value as the host's effective width; for CSS-string values the shift clamp falls back to `parentWidth × widthMultiplier` (consumers pairing `maxWidth` with `overflow: 'shift'` should pass a number when overflow accuracy matters). `maxWidth: 0` is a valid value and collapses the host — the `min-width: <reference width>` floor yields to it (it did not before the first release, and every narrowing knob was a no-op). Setting `maxWidth` also opts the host out of the mobile full-bleed branch entirely, anchor included. |
 | `offsetY` | `number` | `0` | Vertical offset in px |
 | `offsetX` | `number` | `0` | Horizontal offset in px |
 | `zIndex` | `number` | `1201` | CSS z-index value |
@@ -99,13 +115,16 @@ const open = ref(false)
 
 ## Events
 
+> Every field below, printed live as you drag the reference around:
+> [events, callbacks and state attributes](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/events-state).
+
 The directive dispatches a `teleport-positioned` CustomEvent on the element after each position calculation:
 
 ```vue
 <div
   v-teleport-to="{ to: trigger }"
   @teleport-positioned="onPositioned"
->
+>…</div>
 ```
 
 ```ts
@@ -116,6 +135,9 @@ function onPositioned(e: CustomEvent<TeleportToEventDetail>) {
   console.log(e.detail.fit)            // 'fits' | 'flipped' | 'neither' | 'unmeasured'
   console.log(e.detail.maxHeight)      // actual maxHeight applied
   console.log(e.detail.collapsed)      // did maxHeight come out at 0?
+  console.log(e.detail.truncated)      // is the content taller than that maxHeight?
+  console.log(e.detail.contentHeight)  // the host's own height, unclamped (px | null)
+  console.log(e.detail.contentWidth)   // the host's own width, unsqueezed (px | null)
   console.log(e.detail.referenceHidden) // is the reference fully out of view?
   console.log(e.detail.hidden)          // did the directive hide the host this tick?
 }
@@ -175,7 +197,7 @@ including the default:
 
 | `fit` | Meaning |
 |---|---|
-| `'fits'` | The preferred side could hold the host, so it was kept — reported even when the opposite side has more room. |
+| `'fits'` | The preferred side could hold the host **at the size it will render**, so it was kept — reported even when the opposite side has more room. Does *not* mean nothing is cut: a host clamped by your own `maxHeight` fits on both sides and is cut on both. Read `truncated` for that. |
 | `'flipped'` | The preferred side could not hold the host and the opposite side could. |
 | `'neither'` | **No side of the axis can hold the host.** The side with more room was picked and `maxHeight` is clamped to whatever room it has — possibly `0`, in which case `collapsed` is `true` too. Give the boundary more room, lower `maxHeight`, or hide the host yourself. |
 | `'unmeasured'` | No fit test ran: `flip: false`, or the host's extent could not be read (see `flip`). The side you asked for stands. |
@@ -185,6 +207,61 @@ out at `0`, so the host is painted at nothing but its own padding, fully
 opaque. A host with no measurable box reports `'unmeasured'` and is collapsed
 at the same time — which is exactly the case that used to render as an
 invisible empty box with no signal at all.
+
+`truncated` is the other one. It means **the content is taller than the
+`max-height` being written**, so the popover you are looking at is not short,
+it is cut. `fit` cannot carry it, because a host clamped by your own
+`maxHeight` *fits on both sides and is cut on both* — `'fits'` is the correct
+answer and a useless one. Flipping cannot help there either; raising
+`maxHeight`, scrolling the host (`overflow: auto` makes the rest reachable
+rather than lost) or shortening the content can. Mirrored as
+`data-teleport-truncated`.
+
+`contentHeight` / `contentWidth` are the measurement the decision was taken
+from: the host's own box with the closed state, our `max-height` clamp and the
+side coordinate all lifted. `contentHeight > maxHeight` is exactly `truncated`.
+Both are `null` when the host has no box even then, which is also when `fit`
+reports `'unmeasured'`.
+
+### How the host is measured, and the one rule it asks of you
+
+> Both consequences below have a card: [content measurement](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/content-measurement) is the
+> collapsing closed state, and [v-show before or after the directive](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/vshow-order) is the
+> ordering that used to decide the answer.
+
+The fit test asks a question about the **content** — "how much room does this
+host need?" — and the host's *current rendered box* is not that. It is the
+content after `display: none`, a closed-state animation, this library's own
+`max-height` and the side coordinate have all had their say. Measuring through
+any of them either lied or livelocked, so the measurement is taken once per
+tick as a single synchronous probe: the host is put in `data-teleport-state="open"`
+with no `data-teleport-placement`, its inline `display` cleared, `max-height`,
+`height` and `transform` neutralised, the tick's own width constraints applied,
+transitions disabled — the rect is read, and the entire `style` attribute is
+restored verbatim. Nothing paints in between, and the element is byte-identical
+afterwards.
+
+Two consequences worth knowing:
+
+- **`v-show` before or after the directive no longer matters.** Vue runs
+  directives in source order, so `v-show` written *after* `v-teleport-to` used
+  to leave the host `display: none` at measure time — `fit: 'unmeasured'`, the
+  cramped side kept, and no later tick to correct it. Both orderings now reach
+  the same verdict, and `v-show` keeps working, because the probe restores what
+  it cleared.
+- **A closed state that collapses the box is safe again.**
+  `[data-teleport-state="closed"] { max-height: 0 }` — the animation this README
+  suggests — used to be measured *as the tooltip's real size*: 18px of padding
+  for a 127px tooltip, which "fitted" on a side with 60px of room and rendered
+  thirteen of thirty-six words while `fit` said `'fits'`.
+
+**The rule:** the host's box must not depend on the side it is given. An
+absolutely-positioned arrow that swaps edges on `[data-teleport-placement]` is
+fine — it changes neither the host's height nor its width. Content that
+*reflows to a different height per side* is not, and it is the one remaining
+way to make the two sides take turns forever. The placement attribute is
+removed for the duration of the measurement precisely so that keying content
+off it cannot do this by accident.
 
 ### Edge buffers
 
@@ -245,6 +322,20 @@ told that this is not a short popover but an impossible one.
 }
 ```
 
+And `data-teleport-truncated` (present / absent, mirroring `detail.truncated`)
+for the quieter end of it: the host has room, and is still cut, because its
+content is taller than the `max-height` being written. That happens on ordinary
+geometry — `maxHeight` defaults to `240` — and every other signal on the host
+reads healthy while it does.
+
+```css
+/* A cut popover should look cut, not just short. */
+.dropdown[data-teleport-truncated] {
+  overflow-y: auto; /* the rest becomes reachable rather than lost */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+}
+```
+
 The directive also writes `data-teleport-state="open" | "closed"` for
 free open/close animations without a separate `<Transition>` wrapper:
 
@@ -259,7 +350,11 @@ free open/close animations without a separate `<Transition>` wrapper:
 ```
 
 `"open"` after a successful position calc, `"closed"` while disabled
-(`enabled: false`) or while `to` is missing/detached. Pair with
+(`enabled: false`) or while `to` is missing/detached. **A closed state that
+collapses the box is safe** — `max-height: 0`, `height: 0` and
+`transform: scaleY(0)` are all neutralised for the duration of the measurement
+(see *How the host is measured* above), so the fit test sees the tooltip and
+not the 18px of padding it is animating out of. Pair with
 `transform-origin: var(--teleport-arrow-x) var(--teleport-arrow-y)` (or with
 the implicit `transform-origin` set by the directive) for a popover that
 visually expands from its anchor edge.
@@ -286,6 +381,9 @@ When the host becomes visible again the directive restores whatever inline
 not touch `visibility` at all.
 
 ## Arrow positioning
+
+> [Arrow positioning](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/arrow) — including the right-anchored host, where the two vars are the
+> only thing that keeps the arrow on the reference.
 
 Pass an arrow element via the `arrow` option to receive `--teleport-arrow-x`
 and `--teleport-arrow-y` CSS custom properties on the host. They locate the
@@ -329,6 +427,9 @@ tick (one always equals `0px`); selecting on `[data-teleport-placement="..."]`
 keeps each placement's CSS rules independent.
 
 ## Composable: `useTeleportTo`
+
+> [`useTeleportTo` inside `<Teleport to="body">`](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/composable) — the transformed-ancestor escape
+> hatch, wired up and running.
 
 For cases where binding the directive directly is awkward — e.g. when the
 positioned element lives inside a `<Teleport to="body">` slot — use the
@@ -386,6 +487,8 @@ component (or surrounding `effectScope`) is disposed. Returned refs:
 - `fit: Ref<TeleportToFit>` — outcome of the fit test. `'unmeasured'` unless you passed the host as the second argument
 - `maxHeight: Ref<number>` — effective max height after clamping
 - `collapsed: Ref<boolean>` — did `maxHeight` come out at `0`? Mirrors the directive's `data-teleport-collapsed`
+- `truncated: Ref<boolean>` — is the content taller than that `maxHeight`? Mirrors the directive's `data-teleport-truncated`
+- `contentHeight: Ref<number | null>` / `contentWidth: Ref<number | null>` — the host's own unclamped box, the number the fit test compared
 - `referenceHidden: Ref<boolean>` — was the reference fully out of view on the last calculation? Reported whether or not `hideWhenReferenceHidden` is on, so you can drive a `v-if` off it
 - `hidden: Ref<boolean>` — did `styles` come back carrying `visibility: 'hidden'`? True for either hide signal (`hideWhenReferenceHidden` or `overflow: 'hide'`)
 - `state: Ref<'open' | 'closed'>` — bind via `:data-teleport-state="state"` to enable `[data-teleport-state="open"]` CSS open/close animations (mirrors the directive's `data-teleport-state` attribute)
@@ -393,7 +496,7 @@ component (or surrounding `effectScope`) is disposed. Returned refs:
 
 ## Behavior
 
-- **Auto placement**: Prefers the vertical side (above or below the reference) with more available space, then runs the fit test on it and moves the host if it does not fit there and the other side can. Intentionally vertical-only — use explicit `'left'` / `'right'` for horizontal popovers. Before 3.0.0 `'auto'` returned the comparative answer *before* the fit test could run, and since it was the default placement and `flip` defaulted to off, a bare `v-teleport-to="{ to: ref }"` never asked whether the popover fitted where it was put: it was clamped into whatever room that side had, down to `max-height: 0px`, with `data-teleport-fit` permanently `"unmeasured"`
+- **Auto placement**: Prefers the vertical side (above or below the reference) with more available space, then runs the fit test on it and moves the host if it does not fit there and the other side can. Intentionally vertical-only — use explicit `'left'` / `'right'` for horizontal popovers. Before the first release `'auto'` returned the comparative answer *before* the fit test could run, and since it was the default placement and `flip` defaulted to off, a bare `v-teleport-to="{ to: ref }"` never asked whether the popover fitted where it was put: it was clamped into whatever room that side had, down to `max-height: 0px`, with `data-teleport-fit` permanently `"unmeasured"`
 - **Flip**: on by default and **fit-based** — it holds the side you asked for while the host fits there and moves only when it stops fitting, so `'bottom'` is never a synonym for "the roomier side". See the `flip` option above for the exact rule, the layout read it costs, and what happens when the host cannot be measured. `flip: false` pins the side
 - **Horizontal placement**: `placement: 'left' \| 'right'` positions the host beside the reference, top-aligned, with the host's near edge anchored to the reference's matching edge. Bypasses mobile full-bleed and the right-edge anchor branch (consumer's explicit choice wins). `flip` (on by default) swaps `'left'` ↔ `'right'` on the same fit rule, comparing the host's width against the space beside the reference
 - **Reference out of view**: The host hides itself (`visibility: hidden`) while the reference is fully outside `intersect(boundary, viewport)`, and comes back when any part of it does. On by default — see `hideWhenReferenceHidden`
@@ -403,7 +506,7 @@ component (or surrounding `effectScope`) is disposed. Returned refs:
 - **RAF batching**: Scroll and resize events are debounced via `requestAnimationFrame` to prevent layout thrashing
 - **Capture-phase scroll**: Listens for scroll events in the capture phase to detect nested scrollable containers
 - **Reduced motion**: When `(prefers-reduced-motion: reduce)` matches, the directive does not write `transform-origin` so consumer CSS animations are not silently re-anchored. Any prior inline value is cleared on the next calculation tick.
-- **SSR-safe**: The package imports cleanly in a Node.js context with no `window` / `document`. The directive's lifecycle hooks (`mounted`, `updated`, `unmounted`) only fire client-side per Vue 3's SSR contract, so the directive form is automatically a server-side no-op. The `useTeleportTo` composable also handles the server case: when `to` is `null` / `undefined` / a `Ref<HTMLElement | null>` whose value is `null`, no `window` access is attempted and the returned refs hold their default values (`styles: {}`, `placement: null`, `availableSpace: 0`, `oppositeSpace: 0`, `fit: 'unmeasured'`, `maxHeight: 0`, `collapsed: false`, `referenceHidden: false`, `hidden: false`). Listener registration and `requestAnimationFrame` are gated by `typeof window !== 'undefined'`.
+- **SSR-safe**: The package imports cleanly in a Node.js context with no `window` / `document`. The directive's lifecycle hooks (`mounted`, `updated`, `unmounted`) only fire client-side per Vue 3's SSR contract, so the directive form is automatically a server-side no-op. The `useTeleportTo` composable also handles the server case: when `to` is `null` / `undefined` / a `Ref<HTMLElement | null>` whose value is `null`, no `window` access is attempted and the returned refs hold their default values (`styles: {}`, `placement: null`, `availableSpace: 0`, `oppositeSpace: 0`, `fit: 'unmeasured'`, `maxHeight: 0`, `collapsed: false`, `truncated: false`, `contentWidth: null`, `contentHeight: null`, `referenceHidden: false`, `hidden: false`). Listener registration and `requestAnimationFrame` are gated by `typeof window !== 'undefined'`.
 - **Overflow / clip containers**: The default `strategy: 'fixed'` produces viewport-relative coordinates, so the host escapes ancestor `overflow: hidden`, `overflow: clip`, `clip-path`, and `mask-image` clipping. The math reads only the reference's `getBoundingClientRect()` — never any ancestor's overflow or clip styles. Inside a scrolling `overflow: auto` container, pass the scroller via `scrollContainer` so the host follows the inner scroll. Switch to `strategy: 'absolute'` when you explicitly *want* the host to sit inside an ancestor (the consumer accepts the clip trade-off).
 - **Transformed-ancestor gotcha** (CSS limitation): when an ancestor has a `transform`, `filter`, `perspective`, `will-change: transform`, or `contain: paint / layout / strict / content` applied, that ancestor becomes the **containing block** for any `position: fixed` descendant — so the host is positioned relative to the ancestor, *not* the viewport, and is clipped by the ancestor's `overflow`. The directive itself emits the same output (viewport-coord math), but the browser's rendering shifts. **Workaround**: render the host inside a `<Teleport to="body">` slot and bind styles via `useTeleportTo()` — the host now lives outside the transformed ancestor at render time, so `position: fixed` recovers its viewport-relative behavior. See the *Composable: `useTeleportTo`* section above.
 

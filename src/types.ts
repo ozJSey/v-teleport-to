@@ -568,6 +568,42 @@ export type TeleportToEventDetail = {
    */
   collapsed: boolean
   /**
+   * Whether the host's own content is **taller than the `max-height` being
+   * written** — the popover you are looking at is not short, it is cut.
+   *
+   * Mirrored onto the host as `data-teleport-truncated` (present/absent).
+   *
+   * This is deliberately NOT folded into `fit`. `fit` answers "does the host,
+   * at the size it will render, fit on this side", and `'fits'` stays the
+   * correct answer when the thing that made it that size was your own
+   * `maxHeight` (or ours, defaulting to 240). Cutting is a separate fact, and
+   * it is the one the fit verdict structurally cannot carry: a host clamped by
+   * `maxHeight` fits on both sides and is cut on both.
+   *
+   * Whether to raise `maxHeight`, scroll the host or shorten the content is
+   * your call — being told is not optional.
+   */
+  truncated: boolean
+  /**
+   * The host's natural content width (px), measured under the width
+   * constraints this tick applies and with no side coordinate in the way, or
+   * `null` when the host has no box even then (a `display: none` ancestor) —
+   * and when there is no host at all, which is the `useTeleportTo` case where
+   * the composable was given no element.
+   *
+   * This is the number the fit test used, exposed so a consumer can explain
+   * the decision — `contentHeight` against `availableSpace` and `maxHeight` is
+   * the whole verdict.
+   */
+  contentWidth: number | null
+  /**
+   * The host's natural content height (px) at `contentWidth`, with no
+   * `max-height` in the way, or `null` on the same terms as `contentWidth`.
+   *
+   * `contentHeight > maxHeight` is exactly `truncated`.
+   */
+  contentHeight: number | null
+  /**
    * Whether the reference element was **fully out of view** on this tick,
    * measured against `intersect(boundary, viewport)` on all four sides.
    *

@@ -41,24 +41,84 @@ function makeRef(rect: Partial<DOMRect> = {}): HTMLElement {
  */
 function sizeHost(
   el: HTMLElement,
-  box: { height?: number; width?: number; natural?: number },
+  box: {
+    height?: number
+    width?: number
+    natural?: number
+    /**
+     * A box **shorter than `min(natural, clamp)`** — the host collapsed by the
+     * consumer's own closed state (`max-height: 0`, `height: 0`), which is the
+     * shape the tooltip bug arrived in. Reported on every read EXCEPT the
+     * directive's own measurement probe, because the probe's whole job is to
+     * neutralise that state before reading (TT-18).
+     *
+     * Without this mode the suite structurally cannot hold a regression for
+     * the bug: the other two modes are a fixed height and
+     * `min(natural, the max-height we last wrote)`, and both *guarantee* the
+     * rect is at least as tall as the content allows. This bug is the case
+     * where the rect is smaller than both.
+     */
+    collapsedTo?: number
+    /**
+     * Natural height as a function of the width the host is measured at —
+     * text that re-wraps. The no-animation half of TT-18: a host measured in
+     * normal flow at the parent's width needs fewer lines than the same host
+     * at the width the directive is about to give it.
+     */
+    naturalAt?: (width: number) => number
+    /** The width the host has in normal flow, before the directive writes one. */
+    flowWidth?: number
+  },
 ): HTMLElement {
+  /** A CSS length in `px`, or `null` for `auto` / `none` / `100vw` / absent. */
+  const px = (value: string): number | null => {
+    if (!/^-?[\d.]+px$/.test(value.trim())) return null
+    const n = Number.parseFloat(value)
+    return Number.isFinite(n) ? n : null
+  }
+  /**
+   * Is the directive measuring right now? The probe lifts the clamp to
+   * `max-height: none`, which no other code path writes — so this is the one
+   * read where the host is allowed to report its content rather than its box.
+   */
+  const probing = () => el.style.getPropertyValue('max-height') === 'none'
+
+  const measureWidth = () => {
+    if (!probing()) return box.flowWidth ?? box.width ?? 0
+    // `width` wins outright (matchWidth / full-bleed); otherwise the host is
+    // shrink-to-fit, capped by `max-width`.
+    const explicit = px(el.style.getPropertyValue('width'))
+    if (explicit !== null) return explicit
+    const cap = px(el.style.getPropertyValue('max-width'))
+    // No cap in force means no constraint, which in a browser means the host
+    // is whatever width normal flow gives it. A probe that forgot to apply the
+    // tick's width lands here — and must, or the "wrapping text is measured at
+    // the width the tick writes" regression has nothing to detect.
+    if (cap === null) return box.flowWidth ?? box.width ?? 0
+    return box.width === undefined ? cap : Math.min(box.width, cap)
+  }
+
   const measure = () => {
-    if (box.natural === undefined) return box.height ?? 0
+    // `v-show` hides by writing an inline `display: none`, and an element with
+    // no box has no rect. The probe clears it; nothing else does.
+    if (el.style.display === 'none') return 0
+    if (box.collapsedTo !== undefined && !probing()) return box.collapsedTo
+    const natural = box.naturalAt ? box.naturalAt(measureWidth()) : box.natural
+    if (natural === undefined) return box.height ?? 0
     // `natural` models a real browser instead of a fixed number: the host is
     // as tall as its content wants, truncated by whatever `max-height` the
     // directive last wrote. That is the loop the fit test has to survive — a
     // host squeezed onto a cramped side must not start reporting that it fits.
     const clamp = Number.parseFloat(el.style.maxHeight)
-    return Number.isFinite(clamp) ? Math.min(box.natural, clamp) : box.natural
+    return Number.isFinite(clamp) ? Math.min(natural, clamp) : natural
   }
   el.getBoundingClientRect = () =>
     ({
       top: 0,
       left: 0,
-      width: box.width ?? 0,
+      width: el.style.display === 'none' ? 0 : measureWidth(),
       height: measure(),
-      right: box.width ?? 0,
+      right: el.style.display === 'none' ? 0 : measureWidth(),
       bottom: measure(),
       x: 0,
       y: 0,
@@ -1324,7 +1384,12 @@ describe('flip option — fit-based semantics', () => {
       events.push((e as CustomEvent<TeleportToEventDetail>).detail)
     })
     const refEl = makeRef({ left: 600, right: 800, width: 200 })
-    mountDirective(el, { to: refEl, placement: 'right', flip: true })
+    // `widthMultiplier: 3.5` puts the host's own `max-width` at 700 so the
+    // 700px content is reachable. The default 1.5 caps it at 300, and a host
+    // cannot measure wider than the `max-width` the tick applies — the fit
+    // test would then be deciding about a width the host can never render at,
+    // which is the horizontal half of the bug this measurement exists to fix.
+    mountDirective(el, { to: refEl, placement: 'right', flip: true, widthMultiplier: 3.5 })
 
     expect(el.dataset.teleportPlacement).toBe('left') // 600 > 224
     expect(el.dataset.teleportFit).toBe('neither')
@@ -6615,5 +6680,323 @@ describe('hide mechanism — consumer display ownership', () => {
     expect(mounted.el.dataset.teleportHidden).toBeUndefined()
 
     mounted.unmount()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The measurement itself: the host's BOX vs the host's CONTENT.
+//
+// TT-17, TT-18 and TT-19 are one defect in three costumes — the fit test being
+// handed a number that does not describe the content:
+//
+//   TT-17  the box is ABSENT      (`display: none` from a `v-show` written
+//                                  after the directive, the README's own order)
+//   TT-18  the box is COLLAPSED   (`max-height: 0` in the consumer's closed
+//                                  state, or a flow width that re-wraps)
+//   TT-19  the box is OUR CLAMP   (reading through `max-height` is circular,
+//                                  and the fallback answered with the
+//                                  `maxHeight` OPTION, so the content's real
+//                                  size never entered the decision)
+//
+// Every test here states the host's CONTENT height and the room on each side,
+// and asserts the side that shows the most of it. Reverting the probe in
+// `measure-host.ts` to a plain `getBoundingClientRect()` must fail them.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('host measurement — content, not box (TT-17 / TT-18 / TT-19)', () => {
+  /** Room above the reference / below it, in the default 800px test viewport. */
+  const cramped = { top: 60, height: 24, bottom: 84 } // 60 above, 716 below
+
+  it('TT-18: a host collapsed by its own closed state flips instead of "fitting"', () => {
+    // The owner's tooltip. 127px of content, 60px above, `placement: 'top'`,
+    // and a closed state that collapses the box to 18px of padding. Reading
+    // the box says 18 ≤ 60 → `fits` → clamped to 60 → 13 of 36 words.
+    const el = makeEl()
+    sizeHost(el, { natural: 127, collapsedTo: 18, width: 240 })
+    const events: TeleportToEventDetail[] = []
+    el.addEventListener('teleport-positioned', (e) => {
+      events.push((e as CustomEvent<TeleportToEventDetail>).detail)
+    })
+    mountDirective(el, { to: makeRef(cramped), placement: 'top' })
+
+    expect(el.dataset.teleportPlacement).toBe('bottom')
+    expect(el.dataset.teleportFit).toBe('flipped')
+    expect(el.style.maxHeight).toBe('240px') // min(raw 716, maxHeight 240)
+    expect(events[0].contentHeight).toBe(127)
+    // 127 of 127 visible — the assertion the attribute alone cannot make.
+    expect(events[0].truncated).toBe(false)
+  })
+
+  it('TT-18: three consecutive opens agree — the verdict is not taken once for life', () => {
+    const el = makeEl()
+    sizeHost(el, { natural: 127, collapsedTo: 18, width: 240 })
+    const refEl = makeRef(cramped)
+    const opts: TeleportToOptions = { to: refEl, placement: 'top' }
+
+    const verdicts: string[] = []
+    for (let i = 0; i < 3; i++) {
+      mountDirective(el, { ...opts, enabled: true })
+      verdicts.push(`${el.dataset.teleportPlacement}/${el.dataset.teleportFit}/${el.style.maxHeight}`)
+      updateDirective(el, { ...opts, enabled: false })
+      unmountDirective(el)
+    }
+
+    expect(verdicts).toEqual([
+      'bottom/flipped/240px',
+      'bottom/flipped/240px',
+      'bottom/flipped/240px',
+    ])
+  })
+
+  it('TT-18: wrapping text is measured at the width the tick is about to write', () => {
+    // The no-animation half. In normal flow the host is the parent's full
+    // width and the text needs two lines; at the 240px the directive writes it
+    // needs five. Measuring the flow box reports 36px, "fits" above, and
+    // clamps to 60.
+    const el = makeEl()
+    sizeHost(el, {
+      flowWidth: 1024,
+      width: 240,
+      naturalAt: (w) => (w >= 1000 ? 36 : 127),
+    })
+    const events: TeleportToEventDetail[] = []
+    el.addEventListener('teleport-positioned', (e) => {
+      events.push((e as CustomEvent<TeleportToEventDetail>).detail)
+    })
+    // Reference 160px wide → the tick writes `max-width: 240px` (160 × 1.5).
+    mountDirective(el, { to: makeRef({ ...cramped, width: 160, right: 210 }), placement: 'top' })
+
+    expect(events[0].contentHeight).toBe(127)
+    expect(el.dataset.teleportPlacement).toBe('bottom')
+    expect(el.dataset.teleportFit).toBe('flipped')
+  })
+
+  it('TT-17: a host hidden by `v-show` is measured, and stays hidden afterwards', () => {
+    // `v-show` written AFTER the directive leaves `display: none` on the host
+    // at measure time. That used to report `fit: 'unmeasured'` permanently.
+    // The probe clears the inline `display` for the read and puts it back —
+    // if it did not, one imperative write would defeat `v-show` for good.
+    const el = makeEl()
+    sizeHost(el, { natural: 336, width: 240 })
+    el.style.display = 'none'
+    mountDirective(el, { to: makeRef(cramped), placement: 'top' })
+
+    expect(el.dataset.teleportFit).not.toBe('unmeasured')
+    expect(el.dataset.teleportPlacement).toBe('bottom')
+    expect(el.style.display).toBe('none')
+  })
+
+  it('TT-17: both `v-show` orderings produce byte-identical placement', () => {
+    const refRect = { ...cramped, width: 160, right: 210 }
+
+    const directiveFirst = makeEl()
+    sizeHost(directiveFirst, { natural: 336, width: 240 })
+    directiveFirst.style.display = 'none' // v-show has not run yet
+    mountDirective(directiveFirst, { to: makeRef(refRect), placement: 'top' })
+
+    const vShowFirst = makeEl()
+    sizeHost(vShowFirst, { natural: 336, width: 240 })
+    mountDirective(vShowFirst, { to: makeRef(refRect), placement: 'top' })
+
+    const read = (el: HTMLElement) =>
+      `${el.dataset.teleportPlacement}/${el.dataset.teleportFit}/${el.style.maxHeight}`
+    expect(read(directiveFirst)).toBe(read(vShowFirst))
+    expect(read(directiveFirst)).toBe('bottom/flipped/240px')
+  })
+
+  it('TT-19: the verdict does not change once our own clamp is on the host', () => {
+    // The circularity. Tick 1 clamps the host; tick 2 must reach the same
+    // answer, because the number it reads has to be a property of the content
+    // and not of the side we chose last time. Answering with the `maxHeight`
+    // OPTION instead — what the old fallback did — made `flip` comparative
+    // again: measured in Chrome, the host jumped to the opposite side for one
+    // tick with 256px of room and 240px of content on the side it left.
+    const el = makeEl()
+    sizeHost(el, { natural: 240, width: 240 })
+    const boundary = document.createElement('div')
+    document.body.appendChild(boundary)
+    let box = { top: 0, bottom: 460 }
+    boundary.getBoundingClientRect = () =>
+      ({ top: box.top, left: 0, right: 900, bottom: box.bottom,
+         width: 900, height: box.bottom - box.top, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+
+    // Phase 1: 218 above, 218 below — neither holds 240, so the host is
+    // clamped to 218 by SPACE.
+    const refEl = makeRef({ top: 218, height: 24, bottom: 242, width: 160, right: 210 })
+    mountDirective(el, { to: refEl, boundary, placement: 'bottom', maxHeight: 400 })
+    expect(el.dataset.teleportFit).toBe('neither')
+    expect(el.style.maxHeight).toBe('218px')
+
+    // Phase 2: the preferred side now holds all 240px. The clamp from phase 1
+    // is still on the element.
+    box = { top: 0, bottom: 560 }
+    refEl.getBoundingClientRect = () =>
+      ({ top: 280, left: 50, width: 160, height: 24, right: 210, bottom: 304,
+         x: 50, y: 280, toJSON: () => ({}) }) as DOMRect
+    updateDirective(el, { to: refEl, boundary, placement: 'bottom', maxHeight: 400 })
+
+    expect(el.dataset.teleportPlacement).toBe('bottom') // 256 ≥ 240 — it fits
+    expect(el.dataset.teleportFit).toBe('fits')
+    expect(el.style.maxHeight).toBe('256px')
+  })
+
+  it('TT-19: the ladder maximises what is VISIBLE, not what is unclamped', () => {
+    // 300px of content, 250px below, 500px above, `maxHeight: 400` so the
+    // option is not the binding constraint. Below shows 250 of it; above shows
+    // all 300. The owner's sentence: flip if it is going to be visible at top
+    // instead of bottom.
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true, writable: true })
+    const el = makeEl()
+    sizeHost(el, { natural: 300, width: 240 })
+    mountDirective(el, {
+      to: makeRef({ top: 500, height: 26, bottom: 526, width: 160, right: 210 }),
+      placement: 'bottom',
+      maxHeight: 400,
+    })
+
+    expect(el.dataset.teleportPlacement).toBe('top')
+    expect(el.dataset.teleportFit).toBe('flipped')
+    expect(el.style.maxHeight).toBe('400px') // min(raw 500, 400) — all 300 shown
+  })
+
+  it('a host clamped by the `maxHeight` OPTION reports it, and still says "fits"', () => {
+    // 400px of content under the default 240px cap. Both sides render 240, so
+    // there is nothing to gain by moving and `fit: 'fits'` is the honest
+    // answer — but the popover IS cut, and that is what the new signal is for.
+    // Before it, every attribute on this host read healthy.
+    const el = makeEl()
+    sizeHost(el, { natural: 400, width: 240 })
+    const events: TeleportToEventDetail[] = []
+    el.addEventListener('teleport-positioned', (e) => {
+      events.push((e as CustomEvent<TeleportToEventDetail>).detail)
+    })
+    mountDirective(el, { to: makeRef({ top: 300, height: 24, bottom: 324 }), placement: 'bottom' })
+
+    expect(el.dataset.teleportFit).toBe('fits')
+    expect(el.style.maxHeight).toBe('240px')
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(true)
+    expect(events[0].truncated).toBe(true)
+    expect(events[0].contentHeight).toBe(400)
+  })
+
+  it('`data-teleport-truncated` clears the moment the content fits again', () => {
+    const el = makeEl()
+    sizeHost(el, { natural: 400, width: 240 })
+    const refEl = makeRef({ top: 300, height: 24, bottom: 324 })
+    mountDirective(el, { to: refEl, placement: 'bottom' })
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(true)
+
+    updateDirective(el, { to: refEl, placement: 'bottom', maxHeight: 500 })
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(false)
+  })
+
+  it('truncation is reported one layout unit above the noise floor, not half a pixel', () => {
+    // MEASURE_EPSILON. Both operands sit on the engine's 1/64px layout grid, so
+    // the tolerance only has to absorb the ≤1/128px error between the
+    // `max-height` we write and the value the engine quantises it to. At 0.5 a
+    // host clamped 0.484px below its own content reported nothing — measured in
+    // Chrome, and the whole point of the flag is that nothing gets cut quietly.
+    const unit = 1 / 64
+    const natural = 120.3125
+
+    const oneUnit = makeEl()
+    sizeHost(oneUnit, { natural, width: 240 })
+    mountDirective(oneUnit, {
+      to: makeRef({ top: 400, height: 24, bottom: 424 }),
+      placement: 'bottom',
+      maxHeight: natural - unit,
+    })
+    expect(oneUnit.hasAttribute('data-teleport-truncated')).toBe(false)
+
+    const twoUnits = makeEl()
+    sizeHost(twoUnits, { natural, width: 240 })
+    mountDirective(twoUnits, {
+      to: makeRef({ top: 400, height: 24, bottom: 424 }),
+      placement: 'bottom',
+      maxHeight: natural - 2 * unit,
+    })
+    expect(twoUnits.hasAttribute('data-teleport-truncated')).toBe(true)
+  })
+
+  it('the probe restores the host byte-for-byte, priorities included', () => {
+    // The measurement writes a dozen `!important` declarations and has to
+    // leave nothing behind. A `style` attribute that came back one key
+    // different would be a consumer style silently deleted on every tick.
+    const el = makeEl()
+    sizeHost(el, { natural: 100, width: 240 })
+    el.setAttribute('style', 'color: red; transform: rotate(2deg) !important; display: none')
+    el.dataset.teleportState = 'closed'
+
+    mountDirective(el, { to: makeRef(cramped), placement: 'top', flip: false })
+
+    // `flip: false` writes no `max-height` decision of its own beyond the
+    // clamp, so everything the probe touched must survive.
+    expect(el.style.getPropertyValue('color')).toBe('red')
+    expect(el.style.getPropertyPriority('transform')).toBe('important')
+    expect(el.style.getPropertyValue('transform')).toBe('rotate(2deg)')
+    expect(el.style.display).toBe('none')
+    expect(el.style.getPropertyValue('animation')).toBe('')
+    expect(el.style.getPropertyValue('transition')).toBe('')
+  })
+
+  it('the probe leaves no `data-teleport-placement` behind mid-measurement', () => {
+    // The attribute is REMOVED for the duration precisely so consumer CSS
+    // keyed on it cannot make the measurement depend on the side we chose
+    // last tick. What must not happen is it being dropped for good.
+    const el = makeEl()
+    sizeHost(el, { natural: 30, width: 240 })
+    mountDirective(el, { to: makeRef(cramped), placement: 'top' })
+    expect(el.dataset.teleportPlacement).toBe('top')
+
+    window.dispatchEvent(new Event('scroll'))
+    vi.advanceTimersByTime(17)
+    expect(el.dataset.teleportPlacement).toBe('top')
+  })
+
+  it('an unmeasurable host still answers `null`, never `0`', () => {
+    // A host inside a `display: none` ancestor has no box even with the clamp
+    // lifted. `0` would read as "fits anywhere", which is how a popover ends
+    // up pinned to a side with no room.
+    const el = makeEl()
+    const events: TeleportToEventDetail[] = []
+    el.addEventListener('teleport-positioned', (e) => {
+      events.push((e as CustomEvent<TeleportToEventDetail>).detail)
+    })
+    el.getBoundingClientRect = () =>
+      ({ top: 0, left: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0,
+         toJSON: () => ({}) }) as DOMRect
+
+    mountDirective(el, { to: makeRef(cramped), placement: 'top' })
+
+    expect(el.dataset.teleportFit).toBe('unmeasured')
+    expect(el.dataset.teleportPlacement).toBe('top') // the requested side stands
+    expect(events[0].contentHeight).toBe(null)
+    expect(events[0].contentWidth).toBe(null)
+    expect(events[0].truncated).toBe(false)
+  })
+
+  it('NEGATIVE CONTROL: a short tooltip in the same collapsed shape does not move', () => {
+    // If every host flips, nothing above is evidence. 30px of content with 60px
+    // above: the cramped side is the right answer and the fix must leave it
+    // alone.
+    const el = makeEl()
+    sizeHost(el, { natural: 30, collapsedTo: 18, width: 240 })
+    mountDirective(el, { to: makeRef(cramped), placement: 'top' })
+
+    expect(el.dataset.teleportPlacement).toBe('top')
+    expect(el.dataset.teleportFit).toBe('fits')
+    expect(el.style.maxHeight).toBe('60px')
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(false)
+  })
+
+  it('NEGATIVE CONTROL: `flip: false` still pins the side it was given', () => {
+    const el = makeEl()
+    sizeHost(el, { natural: 127, collapsedTo: 18, width: 240 })
+    mountDirective(el, { to: makeRef(cramped), placement: 'top', flip: false })
+
+    expect(el.dataset.teleportPlacement).toBe('top')
+    expect(el.dataset.teleportFit).toBe('unmeasured')
+    // …and the cut is still reported, because `flip: false` opts out of the
+    // decision, not out of being told.
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(true)
   })
 })
