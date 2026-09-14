@@ -1,5 +1,148 @@
 # Changelog
 
+## 1.1.1
+
+A patch, and one of its four items is a P0 that has been live since 1.1.0.
+Everything here came out of a blind certification of the published package
+(`TT-22`) — ~700 measured configurations in a real browser, against both the
+source and the published `dist`. **The directive was not the problem**: the
+TT-17/18/19 repair held under everything thrown at it, including a deliberate
+livelock attempt. The composable was.
+
+### Fixed — `useTeleportTo` measured the DOM of the previous frame (P0)
+
+`src/use-teleport-to.ts` ran its recalculation in a `watchEffect` with
+`flush: 'sync'`, on the strength of a comment that said *"there's no separate
+render step to wait for here"*. There is one, whenever the host's content is
+reactive — and that is the ordinary dropdown: `enabled: open` on the options
+and a `v-if` on the contents, which is what this README recommends. Both flip in
+one reactive tick, so the measurement was taken before Vue patched the contents
+in.
+
+Identical markup, identical options, 1280x660, 115px below the trigger and
+513px above:
+
+| | placement | fit | maxHeight | contentHeight | truncated | what you saw |
+|---|---|---|---|---|---|---|
+| directive | `top` | `flipped` | 240 | 242.5 | `true` | 240px, all 8 rows |
+| composable (1.1.0) | `bottom` | `fits` | 115 | **10** | **false** | **a 115px sliver, 3 rows of 8** |
+
+The popover was cut to a sliver and **every signal it handed you said it was
+fine**. It did not recover after 1.8s, or across close/reopen; a manual
+`update()` fixed it, which is what made it a timing bug rather than a geometry
+one. `autoUpdate: true` masked it, because observer callbacks land after the
+patch — but `autoUpdate` is off by default and is documented as covering what
+scroll and resize miss, not as the price of the composable seeing its own host.
+
+The same cause had a second face: a reference that **moves** through reactive
+state the options getter never reads — a spacer growing above it, a sibling's
+`v-if` — changed no dependency of that effect, so nothing re-ran and the host
+stayed where it was indefinitely. The directive tracks this for free, because a
+component re-render *is* its `updated` hook.
+
+Now three triggers, and none of them subsumes the others:
+
+1. **sync** on the options/host dependencies — unchanged, and deliberately so:
+   a `maxHeight` bumped in an event handler is still readable off `styles` on
+   the next line. Pinned by its own test;
+2. **post-flush** on the same dependencies — the measurement, taken against the
+   DOM Vue has already patched;
+3. **`onUpdated`** — every re-render of the owning component, which is exactly
+   the directive's hook. Registered only inside a component; a bare
+   `effectScope` has no render step and keeps (1) and (2).
+
+`styles` is now **compared before it is re-assigned**. That is load-bearing, not
+an optimisation: `styles` is bound into the consumer's template, so a
+post-render re-measure that always assigns a fresh record re-renders, which
+re-measures, forever — Vue bails out with *"Maximum recursive updates
+exceeded"*. The comparison is what makes the correction converge in one extra
+render. As a side effect, a scroll or resize that does not move the host now
+costs no re-render at all.
+
+Five unit tests and three browser checks, all negative-controlled. The browser
+checks needed **card 11 to be rebuilt first**: it had no interaction check, and
+its shape — content always rendered, reference never moves — could not have
+expressed the trigger condition even with one. That is why a blind certifier
+found this and 836 green jsdom tests did not.
+
+### Fixed — dormant hosts kept `data-teleport-truncated` / `data-teleport-collapsed`
+
+`directive.ts`'s `updated` hook hand-listed the attributes it cleared when the
+directive went dormant (`enabled: false`, or a `to` that goes away) and listed
+two of four. So this README's own
+`.dropdown[data-teleport-collapsed] { display: none }` recipe kept matching a
+host the directive had let go of, with nothing left on it to explain why. It now
+calls `clearPositionAttributes`, the shared helper the detached-reference path
+has always used — whose doc comment already warned about exactly this.
+
+### Docs — four claims corrected, all of them measured
+
+- **The Usage snippet did not run.** `v-for="item in items"` with no `items`
+  declared. Pasted verbatim it warned and rendered an empty box, and it is the
+  first code a new consumer copies.
+- **The two headline recipes cancelled each other out.** Usage drove visibility
+  with `v-show` alone, so `data-teleport-state` reached `"open"` on the first
+  successful calc and never left it — while the Data-attributes section sold
+  that attribute as free open/close animation. Measured `opacity: 1` at
+  mount-closed, at open and at close. Usage now passes `enabled`, and the
+  animation recipe says plainly that it replaces `v-show` rather than pairing
+  with it.
+- **`maxWidth` x `overflow: 'shift'`: the implementation was better than its
+  docs.** The README claimed a numeric `maxWidth` made the shift clamp use that
+  value while a CSS string fell back to `parentWidth x widthMultiplier`.
+  Measured with `widthMultiplier: 20` and a 518px host, `600`, `'600px'` and
+  `'min(90vw, 600px)'` all clamp identically, because the clamp uses the host's
+  **measured** width. The projection is only the fallback for a host with no box
+  to measure. The advice to "pass a number when overflow accuracy matters" is
+  gone.
+- **`overflow: 'shift'` is inert for horizontal placement**, and now says so.
+  For `placement: 'right'` the host's left edge already starts at the
+  reference's right edge, which is also the clamp's floor — shift may never push
+  the host onto its own reference. Its entire range of motion is the `offsetX`
+  gap, so at the default `offsetX: 0` it is exactly a no-op: measured
+  byte-identical boxes against `'none'` at every rail position and both
+  multipliers. Use `flip` (on by default, and it runs first) or `'hide'`.
+
+No code changed for any of these four.
+
+### Playground
+
+- **Card 11 (`useTeleportTo`) rebuilt** around the two shapes the P0 needs:
+  `enabled` paired with a `v-if` on the popover's rows, and a slider that moves
+  the reference through state no option reads. Three interaction checks drive
+  it; all three go red against 1.1.0.
+- **Card 05 (`overflow`)** gained an `offsetX` control and a live notice naming
+  the `'shift'` + horizontal no-op, because a control that does nothing and
+  says nothing is how that defect survived.
+- **Card 13 (content measurement)** now clips its space to a drawn `boundary`
+  box, 96px above the reference and 264px below. Its headline claim — drag the
+  content and the placement moves — was previously only true on a short window:
+  at 1280x900 and 1280x1400 the placement never moved across the entire slider.
+  A native check now drives the sweep at three window heights and requires the
+  same transition point at each.
+- **Card 09 (virtual reference)** likewise passes `boundary`, so "right-click
+  near the bottom of the box and the menu opens above the cursor" is true of the
+  box you can see rather than of where your window edge happens to be. It was
+  not reproducible at 900px or 700px of viewport height.
+- **Card 02**'s source comment claimed the boundary made horizontal space vary
+  and the horizontal flip reachable. Neither slider touches the horizontal axis;
+  scrolling the box sideways does, and both flips are reachable that way —
+  measured, and now pinned by a check.
+- **`playground.html` loaded the IIFE Vue build** and then imported a bare
+  `'vue'` specifier from the ESM dist, so the standalone page died on
+  `Failed to resolve module specifier "vue"` before rendering anything (`TT-21`).
+  It uses an import map now, like its five siblings. `pnpm standalone` goes
+  5/6 to 6/6.
+
+### Known, and deliberately not fixed here
+
+`repository`, `homepage` and `bugs` all point at a GitHub repo that 404s, so
+npmjs.com shows dead links and there is no working issue URL — and
+`README.md`'s link to `ARCHITECTURE.md` resolves nowhere, since `files: ["dist"]`
+keeps it out of the tarball. This is portfolio-wide (seven of eleven published
+packages) and needs an owner decision on the URL, so it is tracked in `META-1`
+rather than guessed at here.
+
 ## 1.1.0
 
 **Flipping now maximises how much of the host you can see.** The fit test was

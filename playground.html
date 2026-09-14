@@ -144,13 +144,26 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <!-- An import map, not the IIFE global build. `dist/vTeleportTo.min.js` is an
+       ESM bundle with `vue` left external, so its own first line is
+       `import { toValue } from 'vue'` — a bare specifier the browser cannot
+       resolve on its own, whatever `window.Vue` happens to be. Loading the
+       global build here threw `Failed to resolve module specifier "vue"` before
+       a single line of the page ran (TT-21). Every sibling package's page uses
+       this shape; `pnpm standalone` is the gate. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js"
+    }
+  }
+  </script>
   <script type="module">
     // Load the published library from the built ESM artifact (no bundler needed).
     // This is the exact bytes consumers get from `import 'v-teleport-to'`.
+    import { createApp, ref } from 'vue';
     import { TeleportToPlugin } from './dist/vTeleportTo.min.js';
 
-    const { createApp, ref } = Vue;
     createApp({
       setup() {
         const overflowOpen = ref(false), basicOpen = ref(false),

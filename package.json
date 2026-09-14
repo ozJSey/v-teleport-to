@@ -1,16 +1,16 @@
 {
   "name": "@ozjsey/v-teleport-to",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Vue 3 directive for viewport-aware fixed positioning relative to a reference element \u2014 escapes overflow containers",
   "author": "Ozgur Seyidoglu",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ozJSey/vue-teleport-to.git"
+    "url": "git+https://github.com/ozjsey/v-teleport-to.git"
   },
-  "homepage": "https://github.com/ozJSey/vue-teleport-to#readme",
+  "homepage": "https://github.com/ozjsey/v-teleport-to#readme",
   "bugs": {
-    "url": "https://github.com/ozJSey/vue-teleport-to/issues"
+    "url": "https://github.com/ozjsey/v-teleport-to/issues"
   },
   "type": "module",
   "main": "dist/vTeleportTo.min.cjs",
@@ -29,7 +29,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup vTeleportTo.ts --format esm,cjs --minify --sourcemap --dts --out-dir dist --clean && mv dist/vTeleportTo.js dist/vTeleportTo.min.js && mv dist/vTeleportTo.js.map dist/vTeleportTo.min.js.map && mv dist/vTeleportTo.cjs dist/vTeleportTo.min.cjs && mv dist/vTeleportTo.cjs.map dist/vTeleportTo.min.cjs.map && mv dist/vTeleportTo.d.cts dist/vTeleportTo.min.d.cts && node -e \"const fs=require('fs');for(const f of ['vTeleportTo.min.js','vTeleportTo.min.cjs']){const p='dist/'+f;let s=fs.readFileSync(p,'utf8');s=s.replace(/\\/\\/# sourceMappingURL=vTeleportTo\\.(js|cjs)\\.map/, '//# sourceMappingURL='+f+'.map');fs.writeFileSync(p,s);}\"",

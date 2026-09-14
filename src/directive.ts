@@ -11,7 +11,7 @@
 
 import { type Directive } from 'vue'
 import { syncObservers } from './auto-update'
-import { calculatePosition, releaseHide } from './calculate-position'
+import { calculatePosition, clearPositionAttributes, releaseHide } from './calculate-position'
 import { invokePlacementChange } from './placement-change'
 import { scheduleUpdate, stateMap } from './schedule-update'
 import {
@@ -101,13 +101,17 @@ export const vTeleportTo: Directive<HTMLElement, TeleportToOptions> = {
     state.scrollTargets = nextScrollTargets
 
     if (!opts.to || opts.enabled === false) {
-      // Clear the placement signal so consumer CSS does not keep reacting to
-      // a stale value while the directive is dormant. Same for the arrow
-      // CSS variables — leaving them set would leak stale geometry.
-      delete el.dataset.teleportPlacement
-      delete el.dataset.teleportFit
-      el.style.removeProperty('--teleport-arrow-x')
-      el.style.removeProperty('--teleport-arrow-y')
+      // Clear every signal the positioning path can stamp, so consumer CSS
+      // does not keep reacting to a stale value while the directive is
+      // dormant. Through `clearPositionAttributes` rather than by hand: this
+      // branch DID hand-list it, and hand-listing it is how it kept
+      // `data-teleport-truncated` and `data-teleport-collapsed` on a disabled
+      // host — so the README's own `[data-teleport-collapsed] { display: none }`
+      // recipe went on matching an element the directive had let go of
+      // (TT-22 finding 6). The detached-reference path in
+      // `calculate-position.ts` has always called the shared helper; the two
+      // dormant paths need exactly the same set, and now say so in one place.
+      clearPositionAttributes(el)
       // Release a hide this directive applied. Going dormant never runs a
       // calculation, so without this the host stays hidden forever — there is
       // no later tick to un-hide it.

@@ -66,7 +66,7 @@ import { vTeleportTo } from '@ozjsey/v-teleport-to'
 <template>
   <button ref="trigger" @click="open = !open">Open</button>
 
-  <div v-teleport-to="{ to: trigger }" v-show="open" class="dropdown">
+  <div v-teleport-to="{ to: trigger, enabled: open }" v-show="open" class="dropdown">
     <div v-for="item in items" :key="item">{{ item }}</div>
   </div>
 </template>
@@ -77,8 +77,17 @@ import { vTeleportTo } from '@ozjsey/v-teleport-to'
 
 const trigger = ref<HTMLElement>()
 const open = ref(false)
+const items = ['Profile', 'Settings', 'Sign out']
 </script>
 ```
+
+`enabled: open` beside `v-show="open"` is not a duplicate switch. `v-show` decides
+whether the host is **painted**; `enabled` decides whether the directive is
+**measuring**. Leave it out and the directive goes on positioning a
+`display: none` host on every scroll frame, and `data-teleport-state` never
+leaves `"open"` — which is the one thing the animation recipe under
+*[Data attributes](#data-attributes)* keys off. (That recipe replaces `v-show`;
+it does not pair with it — see the note there.)
 
 ## Options
 
@@ -94,7 +103,7 @@ Most of these are a control on a card rather than a paragraph: the fit ladder on
 | `placement` | `'auto' \| 'top' \| 'bottom' \| 'left' \| 'right'` | `'auto'` | Placement preference. `'top'`/`'bottom'` are vertical; `'left'`/`'right'` place the host beside the reference (top-aligned, with the host's near edge anchored to the reference's matching edge). `'auto'` is vertical-only — it prefers the larger of `top`/`bottom`, then applies the same fit test an explicit side gets, so the host lands on a side it fits on when one exists. Every value here is a *preference*, honoured while the host fits; pass `flip: false` to pin it regardless. |
 | `maxHeight` | `number` | `240` | Maximum height in px |
 | `widthMultiplier` | `number` | `1.5` | Width multiplier relative to the reference element. Because it multiplies the *reference's* width, it projects `0` for a **virtual reference** that is a point (`width: 0`) — pass `maxWidth` instead for cursor-anchored menus. |
-| `maxWidth` | `number \| string` | — | Explicit upper bound for the host width. Overrides the default `parentWidth × widthMultiplier` AND the mobile fullbleed (`100vw`, `<768px`) branch. Number → `${n}px`; string → passed through (any CSS width, e.g. `'min(80vw, 400px)'`). `matchWidth: true` wins on conflict (explicit pinning beats explicit clamping). For numeric values, the `overflow: 'shift'` clamp uses the value as the host's effective width; for CSS-string values the shift clamp falls back to `parentWidth × widthMultiplier` (consumers pairing `maxWidth` with `overflow: 'shift'` should pass a number when overflow accuracy matters). `maxWidth: 0` is a valid value and collapses the host — the `min-width: <reference width>` floor yields to it (it did not before the first release, and every narrowing knob was a no-op). Setting `maxWidth` also opts the host out of the mobile full-bleed branch entirely, anchor included. |
+| `maxWidth` | `number \| string` | — | Explicit upper bound for the host width. Overrides the default `parentWidth × widthMultiplier` AND the mobile fullbleed (`100vw`, `<768px`) branch. Number → `${n}px`; string → passed through (any CSS width, e.g. `'min(80vw, 400px)'`). `matchWidth: true` wins on conflict (explicit pinning beats explicit clamping). The form you pass does **not** change the `overflow: 'shift'` clamp: the clamp uses the host's *measured* width, taken under this tick's width constraints, so `600`, `'600px'` and `'min(90vw, 600px)'` all clamp against the same real number. Number vs CSS string only decides the FALLBACK width used when there is no host box to measure at all — a numeric `maxWidth` projects itself, a CSS string projects `parentWidth × widthMultiplier` because no number can be resolved without rendering. That case is `useTeleportTo` called without its host argument, or a host with no box even with the clamp lifted; every directive binding measures. `maxWidth: 0` is a valid value and collapses the host — the `min-width: <reference width>` floor yields to it (it did not before the first release, and every narrowing knob was a no-op). Setting `maxWidth` also opts the host out of the mobile full-bleed branch entirely, anchor included. |
 | `offsetY` | `number` | `0` | Vertical offset in px |
 | `offsetX` | `number` | `0` | Horizontal offset in px |
 | `zIndex` | `number` | `1201` | CSS z-index value |
@@ -103,7 +112,7 @@ Most of these are a control on a card rather than a paragraph: the fit ladder on
 | `boundary` | `HTMLElement \| 'viewport'` | `'viewport'` | Clipping boundary for available-space math. Pass a scrollable container's element to clamp `maxHeight` and the auto-placement decision against its rect instead of the viewport. Detached elements transparently fall back to viewport. |
 | `flip` | `boolean` | `true` | Move the host to the opposite side along the placement axis when the preferred side **cannot fit the host**. Vertical: `top` ↔ `bottom`. Horizontal: `left` ↔ `right`. Applies to `placement: 'auto'` too — `'auto'` picks its preferred side comparatively and then runs the same ladder. **Fit-based, not comparative**: the preferred side is held for as long as it works, even when the opposite side has more room. Per tick: preferred side fits → stay (`fit: 'fits'`); it cannot and the opposite can → flip (`fit: 'flipped'`); neither can → the side with more room wins so there is still a defined answer (`fit: 'neither'`). "Fits" compares the raw, boundary-clipped space to that edge against the host's own extent along the axis — its `getBoundingClientRect()` height for `'top'`/`'bottom'`, its width for `'left'`/`'right'`. The edge buffers this library reserves are deliberately not charged to that comparison or to `maxHeight`; see *Edge buffers* below. Costs one layout read per tick when there is a host to read, shared with the cross-axis and arrow math. Because the host is measured, keep its box size independent of the side it is given: an absolutely-positioned arrow that swaps edges on `[data-teleport-placement]` is fine (it changes neither the host's height nor its width), content that reflows to a different height per side is not — it can chase itself between the two. When the host cannot be measured (no laid-out box yet, `display: none`, or `useTeleportTo` without a host argument) the side you asked for stands and `fit` reports `'unmeasured'`; a zero measurement is treated as unknown, never as "fits anywhere". `flip: false` pins the side and skips the fit test. |
 | `strategy` | `'fixed' \| 'absolute'` | `'fixed'` | CSS positioning strategy. `'fixed'` (default) uses viewport-relative coordinates so the host escapes overflow/clip ancestors. `'absolute'` uses coordinates relative to the host's nearest positioned ancestor (its `offsetParent`) — useful when the host should track a scrolling parent. With `useTeleportTo`, pass the host element as the second argument — `useTeleportTo(options, hostRef)` — or `'absolute'` falls back to viewport-relative coordinates that the browser then resolves against the offsetParent anyway, landing the host far from the reference. |
-| `overflow` | `'shift' \| 'hide' \| 'none'` | `'none'` | Overflow handling along the placement axis. For VERTICAL placement (`'auto'`/`'top'`/`'bottom'`), the host overflows the left/right viewport edges; `'shift'` clamps `hostLeft` into `[0, viewportWidth − hostWidth]`. For HORIZONTAL placement (`'left'`/`'right'`), the host overflows the right edge (`'right'`) or left edge (`'left'`); `'shift'` clamps along the placement axis while enforcing a no-overlap-with-reference invariant — when the host can't fit without overlapping, the no-overlap constraint wins. Note `flip` is on by default and runs *first*: it moves the host to the other side while that side fits, so `overflow` only ever sees what flipping could not solve. Set `flip: false` if you want to watch `overflow` do the work. `'hide'` hides the host with `visibility: hidden` (never `display` — that belongs to `v-show` / `v-if` / your CSS) when the **host's own box** crosses a viewport edge; the consumer's own inline `visibility` is restored when it fits again. Note this is *not* "hide when the reference scrolls away" — that is `hideWhenReferenceHidden`, and it is already on by default. `'none'` (default) preserves prior behavior. No-op in vertical mobile full-bleed mode (`<768px`, `matchWidth: false`); horizontal placement is always eligible. |
+| `overflow` | `'shift' \| 'hide' \| 'none'` | `'none'` | Overflow handling along the placement axis. For VERTICAL placement (`'auto'`/`'top'`/`'bottom'`), the host overflows the left/right viewport edges; `'shift'` clamps `hostLeft` into `[0, viewportWidth − hostWidth]`. **For HORIZONTAL placement (`'left'`/`'right'`), `'shift'` does effectively nothing, and at the default `offsetX: 0` it is exactly a no-op** — `'shift'` and `'none'` produce byte-identical boxes. That is arithmetic, not an omission: the host's near edge already starts at the reference's far edge (`hostLeft = parentRight + offsetX` for `'right'`), and the clamp's floor is that same edge, because shift is never allowed to push the host onto its own reference. The clamp's entire range of motion is therefore the `offsetX` gap: a positive `offsetX` can be clawed back when the host overflows, and nothing else can. Use `flip` (on by default, and it runs first) or `overflow: 'hide'` for horizontal visibility — `'hide'` reads the host's own box against the viewport and works on every axis. Note `flip` is on by default and runs *first*: it moves the host to the other side while that side fits, so `overflow` only ever sees what flipping could not solve. Set `flip: false` if you want to watch `overflow` do the work. `'hide'` hides the host with `visibility: hidden` (never `display` — that belongs to `v-show` / `v-if` / your CSS) when the **host's own box** crosses a viewport edge; the consumer's own inline `visibility` is restored when it fits again. Note this is *not* "hide when the reference scrolls away" — that is `hideWhenReferenceHidden`, and it is already on by default. `'none'` (default) preserves prior behavior. No-op in vertical mobile full-bleed mode (`<768px`, `matchWidth: false`); horizontal placement is always eligible. |
 | `onPositioned` | `(detail: TeleportToEventDetail) => void` | — | Side-effect callback invoked once per successful calculation with the same payload as the `teleport-positioned` event. Useful when subscribing to the DOM event is awkward (composable consumers, deeply nested templates). Skipped when `to` is missing/detached or `enabled: false`. A throwing callback is caught and logged via `console.error` — it cannot break the directive's RAF loop. |
 | `onPlacementChange` | `(prev: 'top' \| 'bottom' \| 'left' \| 'right' \| null, next: 'top' \| 'bottom' \| 'left' \| 'right') => void` | — | Side-effect callback invoked **only** when the chosen placement changes between consecutive successful ticks. First successful tick fires with `prev: null`. Useful for triggering one-shot CSS transitions or arrow re-animations on a flip without per-tick noise (`onPositioned` covers per-tick needs). Skipped (and the previous-placement cache reset to `null`) when `to` is missing/detached or `enabled: false`. A throwing callback is caught and logged via `console.error`. |
 | `arrow` | `HTMLElement \| Ref<HTMLElement \| null> \| () => HTMLElement \| null` | — | Optional arrow element. When provided and connected, the directive emits `--teleport-arrow-x` / `--teleport-arrow-y` CSS custom properties on the host: vertical placements set `arrow-x` to the reference's horizontal center relative to the host's left edge (and `arrow-y = 0px`); horizontal placements set `arrow-y` to the reference's vertical center relative to the host's top edge (and `arrow-x = 0px`). Tracks `overflow: 'shift'`, `anchorRight`, and `crossAxisAlign` adjustments. The arrow element itself is not styled — consumer CSS pins the arrow to the host edge facing the reference and uses the var to slide it along the perpendicular axis. Detached arrow → vars cleared on next tick. |
@@ -350,8 +359,27 @@ free open/close animations without a separate `<Transition>` wrapper:
 ```
 
 `"open"` after a successful position calc, `"closed"` while disabled
-(`enabled: false`) or while `to` is missing/detached. **A closed state that
-collapses the box is safe** — `max-height: 0`, `height: 0` and
+(`enabled: false`) or while `to` is missing/detached — **and those two are the
+only ways back to `"closed"`.** Two consequences, both of which the recipe above
+is silently wrong without:
+
+- **Drive `enabled`.** A host whose `to` stays put and whose `enabled` is never
+  passed reaches `"open"` on its first successful calc and stays there for the
+  rest of its life, so the transition above never runs in either direction. The
+  attribute reports whether the *directive* is positioning the host, not whether
+  *you* consider the popover open — pass `enabled: open` and the two agree.
+- **Do not pair it with `v-show`.** `v-show` writes `display: none`, which takes
+  the host out of the box tree in the same patch as the attribute flips, so
+  neither the open nor the close transition gets a frame to run in. This recipe
+  *replaces* `v-show`: let `[data-teleport-state="closed"]` carry the closed look
+  (opacity, scale, `max-height: 0`), and keep `v-show` for the plain
+  no-animation dropdown in *[Usage](#usage)*. Every playground card that shows
+  this animation is built that way — `enabled` driven, no `v-show`
+  ([events and state](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/events-state),
+  [content measurement](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/content-measurement),
+  [the composable](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to/composable)).
+
+**A closed state that collapses the box is safe** — `max-height: 0`, `height: 0` and
 `transform: scaleY(0)` are all neutralised for the duration of the measurement
 (see *How the host is measured* above), so the fit test sees the tooltip and
 not the 18px of padding it is animating out of. Pair with
@@ -477,8 +505,33 @@ coordinates that the browser then resolves against the offsetParent anyway,
 landing the host far from the reference. Omitting it is still supported; the
 degradation is opt-in rather than structural.
 
-It listens to scroll and resize events and cleans up automatically when the
-component (or surrounding `effectScope`) is disposed. Returned refs:
+### When it recalculates
+
+Three triggers, and they are not interchangeable:
+
+1. **Immediately**, the moment an option (or the host ref) changes — so a
+   `maxHeight` bumped in an event handler is readable off `styles` on the very
+   next line.
+2. **Again after the render** those changes caused. This is what makes
+   `enabled: open` paired with `v-if` on the host's contents correct: both flip
+   in one reactive tick, and a measurement taken before Vue patches the contents
+   in reads an empty host, decides the cramped side fits, and writes a
+   `max-height` sliver that every signal then reports as healthy. Fixed in
+   1.1.1 — before it, that shape needed `autoUpdate: true` or a manual
+   `update()`.
+3. **On every re-render of the owning component**, which is exactly the
+   directive's `updated` hook. A reference that moves because of state your
+   options getter never reads — a spacer growing above it, a sibling's `v-if` —
+   changes no dependency of (1) or (2), so nothing else would notice. Registered
+   only when the composable is called inside a component; a bare `effectScope`
+   has no render step and keeps (1) and (2).
+
+Plus `scroll` and `resize` (RAF-batched, capture phase), and the `autoUpdate`
+observers when you turn them on. `styles` is compared before it is re-assigned,
+so a recalculation that lands on the same answer costs no re-render.
+
+It cleans up automatically when the component (or surrounding `effectScope`) is
+disposed. Returned refs:
 
 - `styles: Ref<TeleportToStyles>` — bind to `:style`
 - `placement: Ref<'top' | 'bottom' | 'left' | 'right' | null>` — chosen side

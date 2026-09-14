@@ -7000,3 +7000,293 @@ describe('host measurement — content, not box (TT-17 / TT-18 / TT-19)', () => 
     expect(el.hasAttribute('data-teleport-truncated')).toBe(true)
   })
 })
+
+describe('useTeleportTo — the recalc must see the DOM Vue just patched (TT-22 finding 1)', () => {
+  /**
+   * A host whose height is a function of how many children Vue has patched
+   * into it. That is the jsdom stand-in for "the content is reactive", and it
+   * is the whole of what the P0 needed to be visible: no layout engine is
+   * required to tell `10px of padding` from `250px of eight rows`, only a
+   * measurement taken at the right moment.
+   *
+   * Honours the measurement probe exactly as `sizeHost` does — `max-height:
+   * none` is the one read where the host reports its content instead of its
+   * box.
+   */
+  function sizeByChildren(el: HTMLElement, perChild: number, padding: number): HTMLElement {
+    const probing = () => el.style.getPropertyValue('max-height') === 'none'
+    const natural = () => padding + el.children.length * perChild
+    const measure = () => {
+      if (el.style.display === 'none' && !probing()) return 0
+      if (probing()) return natural()
+      const clamp = Number.parseFloat(el.style.maxHeight)
+      return Number.isFinite(clamp) ? Math.min(natural(), clamp) : natural()
+    }
+    el.getBoundingClientRect = () =>
+      ({ top: 0, left: 0, width: 200, height: measure(), right: 200, bottom: measure(),
+         x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    Object.defineProperty(el, 'offsetHeight', { get: () => Math.round(measure()), configurable: true })
+    Object.defineProperty(el, 'offsetWidth', { get: () => 200, configurable: true })
+    return el
+  }
+
+  it('measures the host AFTER `v-if` contents mount in the same tick as the option', async () => {
+    // The README's own dropdown shape: `enabled: open` on the options, `v-if`
+    // on the contents. Both flip in one reactive tick, so a sync-flush recalc
+    // measures the host while it is still empty — 10px of padding "fits" the
+    // 160px below, and the popover is written a 160px sliver it never leaves.
+    //
+    // 1024x800 viewport; reference at 600…640 → 160px below, 600px above.
+    const trigger = makeRef({ top: 600, height: 40, bottom: 640 })
+    const open = ref(false)
+    let api: ReturnType<typeof useTeleportTo> | null = null
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const app = createApp({
+      setup() {
+        const hostRef = ref<HTMLElement | null>(null)
+        api = useTeleportTo(
+          () => ({ to: trigger, enabled: open.value, placement: 'bottom' as const, maxHeight: 240 }),
+          hostRef,
+        )
+        return () =>
+          h(
+            'div',
+            { ref: hostRef, style: api!.styles.value },
+            open.value ? Array.from({ length: 8 }, (_, i) => h('span', { key: i }, `row ${i}`)) : [],
+          )
+      },
+    })
+    app.mount(container)
+    await nextTick()
+
+    // 8 rows × 30px + 10px padding = 250px of content.
+    sizeByChildren(container.firstElementChild as HTMLElement, 30, 10)
+
+    open.value = true
+    await nextTick()
+
+    // 250px capped by `maxHeight: 240` needs 240px. 160 below cannot hold it,
+    // 600 above can — so the popover flips and keeps its full clamp.
+    expect(api!.contentHeight.value).toBe(250)
+    expect(api!.placement.value).toBe('top')
+    expect(api!.fit.value).toBe('flipped')
+    expect(api!.maxHeight.value).toBe(240)
+    expect(api!.styles.value.maxHeight).toBe('240px')
+
+    app.unmount()
+    container.remove()
+  })
+
+  it('NEGATIVE CONTROL: contents that really do fit below are left below', async () => {
+    // Same card, same tick, one row instead of eight. If every host flipped,
+    // the assertion above would be evidence of nothing.
+    const trigger = makeRef({ top: 600, height: 40, bottom: 640 })
+    const open = ref(false)
+    let api: ReturnType<typeof useTeleportTo> | null = null
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const app = createApp({
+      setup() {
+        const hostRef = ref<HTMLElement | null>(null)
+        api = useTeleportTo(
+          () => ({ to: trigger, enabled: open.value, placement: 'bottom' as const, maxHeight: 240 }),
+          hostRef,
+        )
+        return () =>
+          h('div', { ref: hostRef, style: api!.styles.value }, open.value ? [h('span', 'row 0')] : [])
+      },
+    })
+    app.mount(container)
+    await nextTick()
+    sizeByChildren(container.firstElementChild as HTMLElement, 30, 10)
+
+    open.value = true
+    await nextTick()
+
+    expect(api!.contentHeight.value).toBe(40)
+    expect(api!.placement.value).toBe('bottom')
+    expect(api!.fit.value).toBe('fits')
+
+    app.unmount()
+    container.remove()
+  })
+
+  it('follows a reference that moves through state the options getter never reads', async () => {
+    // The second face. Nothing in the options changes and nothing the effect
+    // tracks changes — a spacer above the reference simply grows, so the
+    // reference's BOX moves. The directive sees this because Vue calls its
+    // `updated` hook on every re-render; the composable has to hook the same
+    // step or it stays where it was indefinitely.
+    const trigger = document.createElement('div')
+    document.body.appendChild(trigger)
+    const spacerRef = ref<HTMLElement | null>(null)
+    // Read off the DOM, not off the ref — so the rect changes only once Vue has
+    // patched the spacer, and reading it never registers a reactive dependency.
+    trigger.getBoundingClientRect = () => {
+      const px = Number.parseFloat(spacerRef.value?.style.height ?? '0') || 0
+      return { top: 100 + px, left: 50, width: 200, height: 40, right: 250,
+               bottom: 140 + px, x: 50, y: 100 + px, toJSON: () => ({}) } as DOMRect
+    }
+
+    const shift = ref(0)
+    let api: ReturnType<typeof useTeleportTo> | null = null
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const app = createApp({
+      setup() {
+        const hostRef = ref<HTMLElement | null>(null)
+        api = useTeleportTo(() => ({ to: trigger, placement: 'bottom' as const }), hostRef)
+        return () =>
+          h('div', [
+            h('div', { ref: spacerRef, style: { height: `${shift.value}px` } }),
+            h('div', { ref: hostRef, style: api!.styles.value }, 'contents'),
+          ])
+      },
+    })
+    app.mount(container)
+    await nextTick()
+    expect(api!.styles.value.top).toBe('140px')
+
+    shift.value = 205
+    await nextTick()
+
+    expect(api!.styles.value.top).toBe('345px')
+
+    app.unmount()
+    container.remove()
+  })
+
+  it('keeps the sync property: a mutated options ref updates `styles` in the same tick', () => {
+    // The reason the sync flush was there, and the thing the fix must not
+    // trade away. No `await` anywhere in this test on purpose.
+    const refEl = makeRef({ top: 100, height: 40, bottom: 140 })
+    const opts = ref<TeleportToOptions>({ to: refEl, maxHeight: 200 })
+    const scope = effectScope()
+    const { styles, maxHeight } = scope.run(() => useTeleportTo(opts))!
+
+    expect(styles.value.maxHeight).toBe('200px')
+    opts.value = { to: refEl, maxHeight: 90 }
+    expect(styles.value.maxHeight).toBe('90px')
+    expect(maxHeight.value).toBe(90)
+
+    scope.stop()
+  })
+
+  it('converges: the post-render re-measure does not feed itself', async () => {
+    // `styles` is bound into the template, so a re-measure that always
+    // re-assigns it would re-render, which would re-measure, forever — Vue
+    // gives up with "Maximum recursive updates exceeded". `sameStyles` is what
+    // closes the loop; this counts the renders it takes to settle.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const trigger = makeRef({ top: 600, height: 40, bottom: 640 })
+    const open = ref(false)
+    let renders = 0
+    let api: ReturnType<typeof useTeleportTo> | null = null
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const app = createApp({
+      setup() {
+        const hostRef = ref<HTMLElement | null>(null)
+        api = useTeleportTo(
+          () => ({ to: trigger, enabled: open.value, placement: 'bottom' as const, maxHeight: 240 }),
+          hostRef,
+        )
+        return () => {
+          renders += 1
+          return h(
+            'div',
+            { ref: hostRef, style: api!.styles.value },
+            open.value ? Array.from({ length: 8 }, (_, i) => h('span', { key: i }, `row ${i}`)) : [],
+          )
+        }
+      },
+    })
+    app.mount(container)
+    await nextTick()
+    sizeByChildren(container.firstElementChild as HTMLElement, 30, 10)
+
+    for (let i = 0; i < 12; i++) {
+      open.value = !open.value
+      await nextTick()
+      await nextTick()
+    }
+
+    // Two renders per toggle at worst: the one the toggle causes, and the one
+    // the corrected `styles` causes. Anything unbounded shows up here long
+    // before Vue's own 100-deep bail-out does.
+    expect(renders).toBeLessThanOrEqual(1 + 12 * 2)
+    expect(warn.mock.calls.flat().join(' ')).not.toMatch(/Maximum recursive updates/)
+
+    app.unmount()
+    container.remove()
+  })
+})
+
+describe('dormant hosts drop every position attribute (TT-22 finding 6)', () => {
+  it('`enabled: false` clears data-teleport-truncated', () => {
+    // The README ships `.dropdown[data-teleport-truncated] { … }` and
+    // `.dropdown[data-teleport-collapsed] { display: none }` as recipes. A
+    // disabled host that keeps either of them is a host the consumer's CSS is
+    // still styling as cut or hiding outright, with nothing on it to explain
+    // why — the directive has stopped measuring and is not entitled to an
+    // opinion any more.
+    const el = makeEl()
+    sizeHost(el, { natural: 400, width: 300 })
+    const refEl = makeRef({ top: 300, height: 40, bottom: 340 })
+
+    mountDirective(el, { to: refEl })
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(true)
+
+    updateDirective(el, { to: refEl, enabled: false })
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(false)
+    expect(el.hasAttribute('data-teleport-collapsed')).toBe(false)
+    expect(el.hasAttribute('data-teleport-placement')).toBe(false)
+    expect(el.hasAttribute('data-teleport-fit')).toBe(false)
+    expect(el.dataset.teleportState).toBe('closed')
+  })
+
+  it('`enabled: false` clears data-teleport-collapsed', () => {
+    const el = makeEl()
+    sizeHost(el, { natural: 120, width: 300 })
+    // Hard against the top of the viewport with `placement: 'top'` and no flip:
+    // zero room, `max-height: 0`, collapsed.
+    const refEl = makeRef({ top: 0, height: 40, bottom: 40 })
+
+    mountDirective(el, { to: refEl, placement: 'top', flip: false })
+    expect(el.hasAttribute('data-teleport-collapsed')).toBe(true)
+
+    updateDirective(el, { to: refEl, placement: 'top', flip: false, enabled: false })
+    expect(el.hasAttribute('data-teleport-collapsed')).toBe(false)
+    expect(el.dataset.teleportState).toBe('closed')
+  })
+
+  it('a `to` that goes away clears them too', () => {
+    const el = makeEl()
+    sizeHost(el, { natural: 400, width: 300 })
+    const refEl = makeRef({ top: 300, height: 40, bottom: 340 })
+
+    mountDirective(el, { to: refEl })
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(true)
+
+    updateDirective(el, { to: undefined as unknown as HTMLElement })
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(false)
+    expect(el.dataset.teleportState).toBe('closed')
+  })
+
+  it('NEGATIVE CONTROL: a still-enabled host keeps them', () => {
+    const el = makeEl()
+    sizeHost(el, { natural: 400, width: 300 })
+    const refEl = makeRef({ top: 300, height: 40, bottom: 340 })
+
+    mountDirective(el, { to: refEl })
+    updateDirective(el, { to: refEl, maxHeight: 200 })
+
+    expect(el.hasAttribute('data-teleport-truncated')).toBe(true)
+    expect(el.dataset.teleportState).toBe('open')
+  })
+})

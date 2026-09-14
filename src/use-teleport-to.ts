@@ -8,7 +8,10 @@
  *
  * The composable exposes a reactive `styles` ref that the consumer applies via
  * `:style="styles"`. It listens to `scroll` / `resize` (RAF-batched, capture
- * phase) and re-computes styles when the supplied options change.
+ * phase) and re-computes styles when the supplied options change — and again
+ * after the render step those option changes caused, because the measurement
+ * has to be taken against the DOM Vue has already patched. See "When the
+ * recalc runs" further down for why there are three triggers and not one.
  *
  * ## Pass the host
  *
@@ -30,7 +33,9 @@
  */
 
 import {
+  getCurrentInstance,
   onScopeDispose,
+  onUpdated,
   toValue,
   watchEffect,
   ref,
@@ -47,6 +52,24 @@ import {
   SCROLL_REMOVE_OPTIONS,
 } from './scroll-target'
 import type { TeleportToFit, TeleportToOptions, TeleportToSide } from './types'
+
+/**
+ * Shallow equality over two style records.
+ *
+ * Every calculation builds a FRESH record, and a ref assigned a new object
+ * triggers whatever its contents are — so the post-render re-measure below
+ * would re-render the component, which would re-run the re-measure, which
+ * would re-render it again. Comparing before assigning is what closes that
+ * loop: the second pass over an unchanged DOM produces an equal record,
+ * assigns nothing, and the cycle ends after one correction. It also makes a
+ * scroll or resize that does not move the host cost zero re-renders, which the
+ * directive got for free by writing `el.style` directly.
+ */
+const sameStyles = (a: TeleportToStyles, b: TeleportToStyles): boolean => {
+  const keys = Object.keys(a) as (keyof TeleportToStyles)[]
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every((key) => a[key] === b[key])
+}
 
 export type UseTeleportToReturn = {
   /** Inline styles to bind via `:style="styles"`. Empty object until the first
@@ -187,7 +210,11 @@ export function useTeleportTo(
     syncScrollTargets(opts)
 
     if (opts.enabled === false) {
-      styles.value = {}
+      // Compared, not assigned — `{}` is a fresh object every time, and a ref
+      // handed a new object always triggers. Assigning unconditionally here is
+      // enough on its own to make the post-render re-measure below recurse
+      // forever on a host that is merely disabled.
+      if (Object.keys(styles.value).length > 0) styles.value = {}
       placement.value = null
       availableSpace.value = 0
       oppositeSpace.value = 0
@@ -227,7 +254,9 @@ export function useTeleportTo(
       return
     }
 
-    styles.value = result.styles
+    // Compared, not merely assigned — see `sameStyles`. The post-render
+    // re-measure below only terminates because an unchanged answer is silent.
+    if (!sameStyles(styles.value, result.styles)) styles.value = result.styles
     placement.value = result.detail.placement
     availableSpace.value = result.detail.availableSpace
     oppositeSpace.value = result.detail.oppositeSpace
@@ -269,17 +298,64 @@ export function useTeleportTo(
     })
   }
 
-  // First run + reactivity to option changes. Sync flush so consumers see
-  // updated styles immediately when they mutate the options ref — there's no
-  // separate render step to wait for here.
-  watchEffect(
-    () => {
-      toValue(options) // collect deps
-      toValue(host) // …and the host, so a late template ref re-runs the calc
-      update()
-    },
-    { flush: 'sync' },
-  )
+  // ── When the recalc runs ───────────────────────────────────────────────────
+  //
+  // Three triggers, because the composable has three ways to go stale and no
+  // one of them subsumes the others. The directive needs only `updated`; it is
+  // handed its host by Vue and writes `el.style` directly, so it never has to
+  // ask when the DOM is ready or worry about feeding its own output back in.
+  //
+  // 1. SYNC, on the options/host dependencies.
+  //    A consumer mutating an options ref sees `styles` updated in the same
+  //    tick, with no render step in between. That property is real and worth
+  //    keeping — a `maxHeight` bumped in an event handler should be readable on
+  //    the next line.
+  //
+  // 2. POST, on the same dependencies.
+  //    …because (1) alone is measured against the PREVIOUS frame's DOM, and
+  //    that was a P0. `enabled: open` paired with `v-if` on the host's contents
+  //    — the shape this README recommends — changes an option and the host's
+  //    content in ONE reactive tick: the sync pass measures the host before Vue
+  //    has patched the contents in, finds 10px of padding, decides the cramped
+  //    side "fits", and writes a `max-height` sliver that never self-corrects.
+  //    Every signal it hands you reads healthy while it does. The post pass
+  //    re-reads the same dependencies after the patch and overwrites the
+  //    answer; `sameStyles` makes it silent whenever the sync pass was already
+  //    right (a plain option mutation with no DOM change).
+  //
+  // 3. `onUpdated`, i.e. every re-render of the owning component.
+  //    The other face of the same defect: a reference that MOVES through
+  //    reactive state the options getter never reads — a spacer's height, a
+  //    sibling's `v-if` — changes no dependency of (1) or (2), so neither of
+  //    them re-runs and the host stays where it was indefinitely. This is
+  //    exactly the directive's `updated` hook, and it is what makes the
+  //    composable track a moving reference the way the directive does.
+  //    Registered only inside a component; an `effectScope` with no instance
+  //    has no render step to hook, and keeps (1) + (2).
+  //
+  // `autoUpdate: true` incidentally papered over both faces, because its
+  // observer callbacks land after the patch. It is off by default and is
+  // documented as covering what scroll/resize miss — never as the price of the
+  // composable seeing its own host.
+  //
+  // WHY (2) AND (3) TERMINATE. Both write `styles`, which the consumer binds,
+  // which renders, which runs (3) again — so this only converges because the
+  // second pass over an unchanged DOM produces an equal record and `sameStyles`
+  // swallows it. That in turn rests on the measurement being a property of the
+  // CONTENT and not of the answer: `measure-host.ts` lifts our own `max-height`
+  // and deletes `data-teleport-placement` before it reads, so the host cannot
+  // report a different size because of where we just put it. If that invariant
+  // is ever weakened, this stops being a one-frame correction and becomes a
+  // render loop — Vue bails out with "Maximum recursive updates exceeded", and
+  // a browser check on playground card 11 exists to catch it.
+  const recalc = (): void => {
+    toValue(options) // collect deps
+    toValue(host) // …and the host, so a late template ref re-runs the calc
+    update()
+  }
+  watchEffect(recalc, { flush: 'sync' })
+  watchEffect(recalc, { flush: 'post' })
+  if (getCurrentInstance()) onUpdated(update)
 
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', schedule, { passive: true })

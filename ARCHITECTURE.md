@@ -20,7 +20,7 @@ concern, with a strictly downward dependency graph.
 | `src/schedule-update.ts` | RAF-batched update scheduler + `WeakMap<HTMLElement, DirectiveState>` host-state registry | `calculate-position`, `placement-change`, `types` |
 | `src/warn-missing-to.ts` | Deferred missing-`to` warning. A template ref is `null` during the render pass that reads it, so `mounted` legitimately sees `to: null` on every correct usage — warning there is pure noise. Defers to `nextTick` and re-reads `state.options` through `stateMap`, so it fires only for a `to` that never arrives, and stays silent for a host unmounted before the flush. `nextTick` rather than a frame deliberately: a frame handle would be a second pending callback for `unmounted` to track and cancel. | `schedule-update`, `vue` (`nextTick`) |
 | `src/directive.ts` | Vue lifecycle hooks (`mounted` / `updated` / `unmounted`); registers/clears scroll + resize listeners; routes auto-update observer callbacks through `scheduleUpdate`. **Invariant: `mounted` always records state, even with no `to`.** `updated` opens with `if (!stateMap.get(el)) return`, so an element that skips registration can never be revived — and `to` is null on first mount for every template ref. Missing `to` means *dormant* (state recorded, no scroll targets, `data-teleport-state="closed"`), never *skipped*. Every dormant branch also calls `releaseHide` — going dormant runs no calculation, so without it a host hidden on the previous tick would stay hidden forever. | `auto-update`, `calculate-position`, `placement-change`, `schedule-update`, `scroll-target`, `types`, `warn-missing-to`, `vue` |
-| `src/use-teleport-to.ts` | `useTeleportTo` composable — reactive `styles`/`placement`/`availableSpace`/`maxHeight` refs for non-directive callers (e.g. inside `<Teleport to="body">` slots) | `auto-update`, `calculate-position`, `placement-change`, `scroll-target`, `types`, `vue` |
+| `src/use-teleport-to.ts` | `useTeleportTo` composable — reactive `styles`/`placement`/`availableSpace`/`maxHeight` refs for non-directive callers (e.g. inside `<Teleport to="body">` slots). Owns **when** the recalc runs, which is the one place the composable is structurally harder than the directive: three triggers (sync on the options, post-flush on the same, and the owning component's `updated`), and a shallow compare on `styles` so a re-measure that lands on the same answer cannot re-render its own way into a loop | `auto-update`, `calculate-position`, `placement-change`, `scroll-target`, `types`, `vue` |
 | `src/plugin.ts` | `app.use()` wrapper — registers the directive under `DIRECTIVE_NAME = 'teleport-to'` | `directive`, `vue` |
 | `src/index.ts` | Public re-export surface (named + default + types) | all of the above |
 | `vTeleportTo.ts` (root) | Build entry — re-exports from `./src` | `src/index.ts` |
@@ -63,6 +63,15 @@ on a number the decision itself had produced. `index.ts` is a pure barrel.
   module-scope `WeakMap` inside `schedule-update.ts`. The directive hooks are
   thin wrappers that read/write that map. GC of the host element auto-cleans
   the entry.
+- **The composable has to be told when the DOM changed; the directive is told
+  by Vue.** `updated` fires after the patch, on every re-render, and the
+  directive writes `el.style` directly — so it can neither measure too early nor
+  feed its own output back into the render. A composable has both problems, and
+  1.1.1 was the release that admitted it: a sync-flush effect measured the
+  previous frame's DOM, and nothing re-ran when a reference moved through state
+  the options getter never read. See the "When the recalc runs" block in
+  `use-teleport-to.ts` for the three triggers and why none of them subsumes the
+  others.
 - **Plugin is a one-line wrapper.** Keeping it separate means consumers who
   prefer manual registration (`app.directive('teleport-to', vTeleportTo)`)
   pay no plugin overhead, and tree-shaking drops it.
@@ -97,6 +106,12 @@ on a number the decision itself had produced. `index.ts` is a pure barrel.
    `playground/scripts/interactions/v-teleport-to.mjs`. jsdom cannot see this
    family of defect at all: it has no layout, so the suite drives a stub of the
    exact thing that was wrong.
+8. If it touches `use-teleport-to.ts`, the check has to live on a card whose
+   shape can express the failure. TT-22's P0 survived a blind certification of
+   every other option because card 11 had no interaction check AND could not
+   have carried one: its content was always rendered and its reference never
+   moved, so the trigger condition was unreachable on it. A card that cannot
+   fail is worth exactly as much as a check that cannot fail.
 
 ## Public surface
 
