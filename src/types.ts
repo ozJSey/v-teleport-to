@@ -1,5 +1,9 @@
 /** Public and internal types for the teleport-to directive. */
 
+// `MaybeRefOrGetter` — and the `toValue` that reads it in `calculate-position`,
+// `auto-update` and `use-teleport-to` — arrived in Vue 3.3.0. Checked against
+// the published packages, not the docs: 3.2.47, the last 3.2, exports neither.
+// That is what sets this package's peer floor at `^3.3.0`.
 import type { MaybeRefOrGetter } from 'vue'
 
 /**

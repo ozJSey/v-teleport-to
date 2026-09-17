@@ -1,5 +1,66 @@
 # Changelog
 
+## 1.1.2
+
+A one-line `package.json` fix, and the line was a false statement about which Vue versions this
+package runs on (PEER-1). The runtime is untouched, and that is checked rather than asserted:
+rebuilt from the 1.1.1 source and from this one, `dist/vTeleportTo.min.js` hashes `2a468c6e…` both
+times and `dist/vTeleportTo.min.cjs` hashes `8c23f58e…` both times. The 854-test suite is unchanged
+and green.
+
+### Fixed
+
+- **`peerDependencies.vue` said `^3.0.0`, and nothing below Vue 3.3.0 has ever run this package.**
+  It now says `^3.3.0`. This corrects a false claim — it withdraws no platform, because the
+  platform it named was never reachable. The floor is set by **`toValue`**, imported at
+  `src/calculate-position.ts:18`, `src/auto-update.ts:14` and `src/use-teleport-to.ts:39`, with its
+  companion type `MaybeRefOrGetter` at `src/types.ts:7`. Both arrived in **Vue 3.3.0** — one minor
+  later than the `getCurrentScope` / `onScopeDispose` floor the sibling directives sit on, which is
+  why this range is not `^3.2.0`. Measured against the published Vue packages rather than read out
+  of a changelog:
+
+  ```
+  vue 3.1.5   toValue=undefined  MaybeRefOrGetter=ABSENT
+  vue 3.2.0   toValue=undefined  MaybeRefOrGetter=ABSENT
+  vue 3.2.47  toValue=undefined  MaybeRefOrGetter=ABSENT   ← the last 3.2
+  vue 3.3.0   toValue=function   MaybeRefOrGetter=present
+  ```
+
+  What the old range bought a consumer, run against the 1.1.1 tarball npm serves today:
+
+  ```
+  $ npm install vue@3.2.47 @ozjsey/v-teleport-to@1.1.1
+  added 25 packages in 1s                          ← npm raises nothing
+  $ node -e "import('@ozjsey/v-teleport-to')"
+  SyntaxError: The requested module 'vue' does not provide an export named 'toValue'
+  ```
+
+  With `^3.3.0` the same install is refused up front — `npm error ERESOLVE ... peer vue@"^3.3.0"
+  from @ozjsey/v-teleport-to@1.1.2` — instead of failing later at the import. Forced past that
+  refusal with `--legacy-peer-deps`, 1.1.2 throws the same `SyntaxError`, which is the negative
+  control for the floor: the range is now exactly as wide as the package.
+
+  Certified on the built tarball, not on the source tree: `vue@3.3.0` + `npm pack` output →
+  `import` succeeds, exporting `DIRECTIVE_NAME, TeleportToPlugin, default, useTeleportTo,
+  vTeleportTo`.
+
+### Changed
+
+- **The Vue test matrix now runs the floor instead of a version above it.** The low rung was
+  `vue3_3@^3.3.13` — above the 3.3.0 floor, and with a caret that resolves to 3.5.x on a fresh
+  install, which would leave both rungs on the same Vue. It is now `vue_floor`, pinned to exactly
+  `vue@3.3.0`. The rung can fail: pointed at 3.2.47 it reddens **403 of its 423 tests** — 386 of the
+  403 in `vTeleportTo.test.ts` and 17 of the 20 in `playground.smoke.test.ts`. 392 die on
+  `TypeError: toValue is not a function`, 5 on assertions that expected no throw, and 6 on null
+  dereferences downstream of a position that never computed. The survivors are the cases that never
+  reach a position calculation.
+- **`vitest.workspace.ts` no longer claims that matrix proves the peer range.** It cannot: Vitest's
+  SSR transform rewrites named imports to property reads, so an export the linked Vue lacks arrives
+  as `undefined` rather than throwing at link time. Only installing the packed tarball against a
+  floor-version Vue tests importability, and the comment now says so.
+- `src/types.ts` records why the floor is 3.3.0, next to the import that sets it.
+- README states the floor in the Install section.
+
 ## 1.1.1
 
 A patch, and one of its four items is a P0 that has been live since 1.1.0.

@@ -21,6 +21,8 @@ Escapes all overflow/clip containers — perfect for dropdowns, popovers, and au
 npm install @ozjsey/v-teleport-to
 ```
 
+Vue 3 is a peer dependency — it won't be bundled. **Vue 3.3.0 or newer is required**: the positioning core reads its options through `toValue()`, which Vue 3.3.0 added and 3.2.x does not export.
+
 ## Register
 
 ### Global (plugin — recommended)
