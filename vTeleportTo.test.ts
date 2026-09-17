@@ -1872,13 +1872,10 @@ describe('strategy option', () => {
 
   it('strategy:"absolute" with placement:"top" computes bottom relative to offsetParent', () => {
     const el = makeEl()
-    const offsetParentEl = document.createElement('div')
-    document.body.appendChild(offsetParentEl)
-    offsetParentEl.getBoundingClientRect = () => ({
-      top: 50, left: 30, right: 530, bottom: 450,
-      width: 500, height: 400, x: 30, y: 50, toJSON: () => ({}),
-    } as DOMRect)
-    setOffsetParent(el, offsetParentEl)
+    // Through `makeOffsetParent` because this asserts a `bottom` coordinate,
+    // and the origin's bottom edge is the parent's CLIENT box — a rect-only
+    // stub leaves `clientHeight` at jsdom's 0 and describes no real element.
+    setOffsetParent(el, makeOffsetParent({ top: 50, left: 30, width: 500, height: 400 }))
 
     // Reference near viewport bottom forces auto → 'top' placement.
     const refEl = makeRef({ top: 700, height: 40, bottom: 740, left: 80, right: 280, width: 200 })
@@ -1893,13 +1890,9 @@ describe('strategy option', () => {
   it('strategy:"absolute" anchors right relative to offsetParent', () => {
     Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true })
     const el = makeEl()
-    const offsetParentEl = document.createElement('div')
-    document.body.appendChild(offsetParentEl)
-    offsetParentEl.getBoundingClientRect = () => ({
-      top: 0, left: 0, right: 1024, bottom: 800,
-      width: 1024, height: 800, x: 0, y: 0, toJSON: () => ({}),
-    } as DOMRect)
-    setOffsetParent(el, offsetParentEl)
+    // Same reason as the `bottom` test above: a `right` coordinate resolves
+    // against the parent's client box, not its border box.
+    setOffsetParent(el, makeOffsetParent({ top: 0, left: 0, width: 1024, height: 800 }))
 
     // ref past WIDTH_THRESHOLD (right=800 in 1024px viewport, threshold ~727)
     const refEl = makeRef({ left: 600, right: 800, width: 200, top: 100, height: 40, bottom: 140 })
@@ -1974,6 +1967,180 @@ describe('strategy option', () => {
     expect(styles.value.top).toBe('140px')
     expect(styles.value.left).toBe('50px')
     scope.stop()
+  })
+})
+
+
+// ─── strategy: 'absolute' — the coordinate ORIGIN ─────────────────────────────
+
+/**
+ * Model a real offsetParent, not just a rect.
+ *
+ * The containing block for an absolutely-positioned child is the
+ * offsetParent's PADDING box, laid out in that parent's SCROLLED content
+ * coordinates. That is three things `getBoundingClientRect()` does not carry —
+ * the border widths (`clientTop` / `clientLeft`), the padding-box size
+ * (`clientWidth` / `clientHeight`) and the scroll offsets — so a harness that
+ * stubs only the rect is describing an element that cannot exist, and it is
+ * exactly what let the origin ship wrong.
+ *
+ * Both facts this models were MEASURED in Chrome (2026-09-17), not reasoned
+ * about:
+ *   - a 20px-bordered offsetParent scrolled to 450 put the released 1.1.2
+ *     host 438px above the reference it was anchored to;
+ *   - a `right: 0` child of a parent with a 17px classic scrollbar landed at
+ *     `left + clientLeft + clientWidth`, i.e. BEHIND the scrollbar — so the
+ *     right/bottom origin is the client box, never `rect.right - border`.
+ */
+function makeOffsetParent(box: {
+  top: number
+  left: number
+  width: number
+  height: number
+  /** Border width on every side, as `clientTop` / `clientLeft` report it. */
+  border?: number
+  /** Classic scrollbar thickness, taken out of the client box. */
+  scrollbar?: number
+  scrollTop?: number
+  scrollLeft?: number
+}): HTMLElement {
+  const { top, left, width, height, border = 0, scrollbar = 0, scrollTop = 0, scrollLeft = 0 } = box
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  el.getBoundingClientRect = () =>
+    ({ top, left, width, height, right: left + width, bottom: top + height,
+       x: left, y: top, toJSON: () => ({}) }) as DOMRect
+  const define = (key: string, value: number) =>
+    Object.defineProperty(el, key, { get: () => value, configurable: true })
+  define('clientTop', border)
+  define('clientLeft', border)
+  define('clientWidth', width - border * 2 - scrollbar)
+  define('clientHeight', height - border * 2 - scrollbar)
+  define('scrollTop', scrollTop)
+  define('scrollLeft', scrollLeft)
+  return el
+}
+
+describe("strategy:'absolute' resolves against the offsetParent's padding box, scrolled", () => {
+  /**
+   * One parent for the whole block: 440x280 at (40,40), 20px border all round,
+   * scrolled 450 down and 130 right. Its padding box therefore starts at
+   * viewport (40+20-130, 40+20-450) = (-70, -390) and is 400x240.
+   *
+   * Every expectation below is stated as the viewport coordinate the browser
+   * will actually paint, then converted — because the thing that was wrong was
+   * the conversion, and an expectation written in the same terms as the code
+   * would have agreed with the bug.
+   */
+  const scrolledParent = () =>
+    makeOffsetParent({ top: 40, left: 40, width: 440, height: 280, border: 20, scrollTop: 450, scrollLeft: 130 })
+
+  it('top/left count the border and the scroll, not just the border-box rect', () => {
+    const el = makeEl()
+    setOffsetParent(el, scrolledParent())
+    const refEl = makeRef({ top: 102, left: 90, width: 200, height: 40, right: 290, bottom: 142 })
+
+    mountDirective(el, { to: refEl, strategy: 'absolute', placement: 'bottom', flip: false })
+
+    // The host's top edge must paint at the reference's bottom edge, 142.
+    // Chrome renders it at opRect.top + clientTop + top - scrollTop, so
+    //   top  = 142 - (40 + 20 - 450) = 532
+    //   left =  90 - (40 + 20 - 130) = 160
+    // 1.1.2 wrote 102 / 50 — the raw rect difference — which paints the host
+    // at (-20, -288): 430px above the trigger it is supposed to hang off, and
+    // 110px to the left of it.
+    expect(el.style.top).toBe('532px')
+    expect(el.style.left).toBe('160px')
+  })
+
+  it('bottom counts the border and the scroll', () => {
+    const el = makeEl()
+    setOffsetParent(el, scrolledParent())
+    const refEl = makeRef({ top: 102, left: 90, width: 200, height: 40, right: 290, bottom: 142 })
+
+    mountDirective(el, { to: refEl, strategy: 'absolute', placement: 'top', flip: false })
+
+    // The host's bottom edge must paint at the reference's top edge, 102.
+    // Chrome renders it at opRect.top + clientTop + clientHeight - bottom -
+    // scrollTop, so bottom = (40 + 20 + 240 - 450) - 102 = -252.
+    expect(el.style.bottom).toBe('-252px')
+    expect(el.style.top).toBe('')
+  })
+
+  it('right counts the border and the scroll', () => {
+    const el = makeEl()
+    setOffsetParent(el, scrolledParent())
+    const refEl = makeRef({ top: 102, left: 90, width: 200, height: 40, right: 290, bottom: 142 })
+
+    mountDirective(el, {
+      to: refEl, strategy: 'absolute', placement: 'bottom', flip: false, crossAxisAlign: 'end',
+    })
+
+    // The host's right edge must paint at the reference's right edge, 290.
+    // Chrome renders it at opRect.left + clientLeft + clientWidth - right -
+    // scrollLeft, so right = (40 + 20 + 400 - 130) - 290 = 40.
+    expect(el.style.right).toBe('40px')
+    expect(el.style.left).toBe('')
+  })
+
+  it("a classic scrollbar shrinks the origin's right edge — `right: 0` sits BEHIND it", () => {
+    // Measured, not assumed: with `::-webkit-scrollbar { width: 17px }` on a
+    // 440px-wide, 20px-bordered parent, a `right: 0` child's right edge landed
+    // at 443 = left + clientLeft + clientWidth, while rect.right - border was
+    // 460. The client box is the origin; the border box is not.
+    const el = makeEl()
+    setOffsetParent(
+      el,
+      makeOffsetParent({ top: 40, left: 40, width: 440, height: 280, border: 20, scrollbar: 17, scrollTop: 450, scrollLeft: 130 }),
+    )
+    const refEl = makeRef({ top: 102, left: 90, width: 200, height: 40, right: 290, bottom: 142 })
+
+    mountDirective(el, {
+      to: refEl, strategy: 'absolute', placement: 'bottom', flip: false, crossAxisAlign: 'end',
+    })
+
+    // clientWidth = 440 - 40 - 17 = 383 → right = (40 + 20 + 383 - 130) - 290 = 23
+    expect(el.style.right).toBe('23px')
+  })
+
+  it("the document's own scroller is exempt — its rect already moved", () => {
+    // The one case where the scroll term must NOT be subtracted: when the
+    // offsetParent IS the document's scrolling element, `getBoundingClientRect`
+    // already reflects the page scroll and taking `scrollTop` off again
+    // double-counts it. Reachable on every QUIRKS-mode document, where
+    // `document.scrollingElement` is `<body>` and `<body>` is the offsetParent
+    // of any statically positioned host. Measured in Chrome on a page scrolled
+    // 1200px: the guardless origin wrote `top: 2840px` for a host that needed
+    // `1640px`, landing it 1192px below its reference; with the guard it writes
+    // the same `1640px` the released 1.1.2 wrote.
+    const el = makeEl()
+    const op = scrolledParent()
+    setOffsetParent(el, op)
+    Object.defineProperty(document, 'scrollingElement', { configurable: true, get: () => op })
+    try {
+      const refEl = makeRef({ top: 102, left: 90, width: 200, height: 40, right: 290, bottom: 142 })
+      mountDirective(el, { to: refEl, strategy: 'absolute', placement: 'bottom', flip: false })
+
+      // Border still counts, scroll does not: top = 142 - (40 + 20) = 82.
+      expect(el.style.top).toBe('82px')
+      expect(el.style.left).toBe('30px')
+    } finally {
+      delete (document as unknown as Record<string, unknown>).scrollingElement
+    }
+  })
+
+  it('NEGATIVE CONTROL: an unbordered, unscrolled offsetParent is still the plain rect difference', () => {
+    // If the border/scroll terms were unconditional the four tests above would
+    // be evidence of nothing — this is the case they must not disturb, and the
+    // one every pre-existing absolute test in this file is written against.
+    const el = makeEl()
+    setOffsetParent(el, makeOffsetParent({ top: 50, left: 30, width: 500, height: 400 }))
+    const refEl = makeRef({ top: 100, height: 40, bottom: 140, left: 80, right: 280, width: 200 })
+
+    mountDirective(el, { to: refEl, strategy: 'absolute' })
+
+    expect(el.style.top).toBe('90px') // 140 - 50
+    expect(el.style.left).toBe('50px') // 80 - 30
   })
 })
 
@@ -5704,6 +5871,58 @@ describe('data-teleport-state attribute', () => {
     scope.stop()
   })
 
+  it('useTeleportTo releases its hide when `to` goes away — `styles` stops carrying visibility', () => {
+    // `hidden` is documented as "whether `styles` carries visibility: 'hidden'
+    // on the most recent calculation". A dormant branch that flips the flag
+    // and leaves the KEY behind does not make that sentence false in a log —
+    // it makes it false on screen: the consumer's `:style="styles"` keeps the
+    // popover invisible while every signal the composable exposes says it is
+    // fine. The directive has `releaseHide` for exactly this; the composable
+    // owns the record, so its release is dropping the key.
+    const refEl = makeRef({ top: -200, height: 40, bottom: -160 }) // above the viewport
+    const toRef = ref<HTMLElement | null>(refEl)
+
+    const scope = effectScope()
+    const api = scope.run(() => useTeleportTo({ to: toRef }))!
+
+    // Default `hideWhenReferenceHidden` hides the host: the reference is out of view.
+    expect(api.referenceHidden.value).toBe(true)
+    expect(api.hidden.value).toBe(true)
+    expect(api.styles.value.visibility).toBe('hidden')
+
+    toRef.value = null
+    vi.advanceTimersByTime(17)
+
+    expect(api.hidden.value).toBe(false)
+    expect(api.styles.value.visibility).toBeUndefined()
+    // …and the rest of the dormant contract, which the same branch owes:
+    // `placement` is documented as `null` "if the reference element is
+    // missing/detached", and it was reporting the side it had chosen for a
+    // reference that no longer exists.
+    expect(api.placement.value).toBeNull()
+    expect(api.fit.value).toBe('unmeasured')
+    expect(api.state.value).toBe('closed')
+
+    scope.stop()
+  })
+
+  it('NEGATIVE CONTROL: a reference that is merely hidden keeps the hide', () => {
+    // The release belongs to the dormant branch only. If it fired on every
+    // tick, `hideWhenReferenceHidden` would never hide anything and the test
+    // above would be passing for the wrong reason.
+    const refEl = makeRef({ top: -200, height: 40, bottom: -160 })
+    const scope = effectScope()
+    const api = scope.run(() => useTeleportTo({ to: refEl }))!
+
+    vi.advanceTimersByTime(17)
+
+    expect(api.hidden.value).toBe(true)
+    expect(api.styles.value.visibility).toBe('hidden')
+    expect(api.state.value).toBe('open')
+
+    scope.stop()
+  })
+
   it('useTeleportTo state starts as "closed" when `to` is null on creation', () => {
     const scope = effectScope()
     const { state } = scope.run(() => useTeleportTo({ to: null as unknown as HTMLElement }))!
@@ -7174,6 +7393,54 @@ describe('useTeleportTo — the recalc must see the DOM Vue just patched (TT-22 
     expect(maxHeight.value).toBe(90)
 
     scope.stop()
+  })
+
+  it('re-measures after the patch with no component instance to hook (trigger 2, not 3)', async () => {
+    // Deleting `watchEffect(recalc, { flush: 'post' })` left all 854 tests
+    // green: every existing TT-22 test calls the composable inside a
+    // component, where `onUpdated` (trigger 3) covers the same frame. The
+    // composable is documented as working in a bare `effectScope` too — and
+    // there trigger 3 is never registered, so the post-flush pass is the ONLY
+    // thing that can see the DOM Vue just patched. This is the TT-22 P0
+    // verbatim, in the one shape the suite could not previously express.
+    const trigger = makeRef({ top: 600, height: 40, bottom: 640 })
+    const open = ref(false)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    // The host is rendered by a component; the composable is NOT called inside
+    // one. Same tick, same reactive source, no `updated` hook in reach.
+    const app = createApp({
+      setup() {
+        return () =>
+          h('div', {}, open.value ? Array.from({ length: 8 }, (_, i) => h('span', { key: i }, `row ${i}`)) : [])
+      },
+    })
+    app.mount(container)
+    await nextTick()
+    const hostEl = sizeByChildren(container.firstElementChild as HTMLElement, 30, 10)
+
+    const scope = effectScope()
+    const api = scope.run(() =>
+      useTeleportTo(
+        () => ({ to: trigger, enabled: open.value, placement: 'bottom' as const, maxHeight: 240 }),
+        hostEl,
+      ),
+    )!
+
+    open.value = true
+    await nextTick()
+
+    // 8 rows x 30px + 10px padding = 250px. 160px below cannot hold the 240px
+    // clamp, 600px above can. The sync pass measured an EMPTY host (10px) and
+    // called the cramped side a fit; only the post pass sees the eight rows.
+    expect(api.contentHeight.value).toBe(250)
+    expect(api.placement.value).toBe('top')
+    expect(api.fit.value).toBe('flipped')
+
+    scope.stop()
+    app.unmount()
+    container.remove()
   })
 
   it('converges: the post-render re-measure does not feed itself', async () => {

@@ -1,5 +1,83 @@
 # Changelog
 
+## 1.1.3
+
+Two defects in code paths the unit suite could only ever stub, and one gate that could not fail.
+`1.1.3` is not published — the registry's `latest` is 1.1.2 as this is written, and everything
+below is in the working tree only.
+
+Both fixes are certified in Chrome, not in jsdom, because jsdom is structurally unable to see
+either of them: it has no layout, so `clientTop`, `clientWidth` and `scrollTop` all read `0` on
+every element and the wrong formula and the right one agree exactly.
+
+### Fixed
+
+- **`strategy: 'absolute'` ignored the offsetParent's border and its scroll offset, so the host
+  landed hundreds of pixels from its reference.** The containing block for an absolutely
+  positioned child is the offsetParent's **padding box, in that parent's scrolled content
+  coordinates**. 1.1.2 used the border box `getBoundingClientRect()` returns, unscrolled — which is
+  correct only for a parent with no border that never scrolls. `position: relative` +
+  `overflow: auto` on one element is the documented use case for this strategy ("the host lives
+  inside a scrolling parent"), and it is exactly the case that was wrong.
+
+  Measured in Chrome against the published 1.1.2 artifact — a 12px/20px-bordered pane scrolled to
+  450, host anchored below its trigger:
+
+  ```
+  1.1.2   writtenTop "102px"  writtenLeft "50px"   deltaY -438  deltaX 20
+  1.1.3   writtenTop "540px"  writtenLeft "30px"   deltaY    0  deltaX  0
+  ```
+
+  `deltaY` is the host's top edge minus the reference's bottom edge: 438px above the trigger it is
+  supposed to hang off. The same run with `placement: 'top'` + `crossAxisAlign: 'end'` inside a
+  pane with a 17px classic scrollbar, scrolled 420 down and 90 right:
+
+  ```
+  1.1.2   bottom "240px"  right "190px"   deltaBottom -457  deltaRight -127
+  1.1.3   bottom "-217px" right "63px"    deltaBottom    0  deltaRight    0
+  ```
+
+  One case is exempt from the scroll term, and finding it is why this was measured rather than
+  reasoned about: when the offsetParent IS `document.scrollingElement`, its rect has already moved
+  with the page scroll and subtracting again double-counts. That is every quirks-mode document
+  (`compatMode: "BackCompat"`), where `<body>` is both the viewport scroller and the offsetParent
+  of a statically positioned host. Measured on a page scrolled 1200px, the guardless origin wrote
+  `top: 2840px` and put the host 1192px BELOW its reference; with the guard it writes `1640px`,
+  byte-identical to what 1.1.2 wrote there. In a standards-mode document the scrolling element is
+  `<html>`, which is never an `offsetParent`, so the guard costs one identity comparison.
+
+  The far edges resolve against `clientWidth` / `clientHeight`, not `rect.right - border`: a
+  `right: 0` child of a parent with a 17px classic scrollbar has its right edge at
+  `left + clientLeft + clientWidth` — measured at 443 where the border box implies 460 — so the
+  scrollbar shrinks the origin. Six unit tests pin the arithmetic through a `makeOffsetParent`
+  harness that models all five numbers; playground card 12 now puts `position: relative` and
+  `overflow: auto` on the SAME element so the card can express the defect at all (its wrapper was
+  the offsetParent before, which never scrolled relative to the reference), and a browser check
+  sweeps the pane's scroll range asserting the gap stays within 1px.
+
+- **`useTeleportTo` left `visibility: hidden` in the style record when `to` went missing, while
+  reporting `hidden: false`.** `hidden` is documented as "whether `styles` carries
+  `visibility: 'hidden'`". The dormant branch for a null/detached `to` flipped the flag and left
+  the key in the record the consumer binds with `:style="styles"` — so the popover stayed
+  invisible with every signal saying it was fine, and there was no later tick to release it. The
+  same branch also left `placement` reporting the side it had chosen for a reference that no
+  longer exists, against its own documented `null`.
+
+  Root cause was duplication: the two dormant branches (`enabled: false` and a missing `to`)
+  hand-listed their resets separately, and the second listed seven of the thirteen. They now share
+  one `goDormant()`.
+
+### Changed
+
+- **The `flush: 'post'` recalc trigger now has a test that can fail.** Deleting
+  `watchEffect(recalc, { flush: 'post' })` — trigger #2 of the TT-22 fix, which was a P0 — left all
+  854 tests green, because every existing test for it calls the composable inside a component where
+  `onUpdated` (trigger #3) covers the same frame. The composable is documented as working in a bare
+  `effectScope`, and there trigger #3 is never registered. The new test uses that shape and fails
+  with `expected 10 to be 250` when the trigger is removed.
+- Playground card 12 and `scripts/interactions/v-teleport-to.mjs` per the above; `README.md`,
+  `src/types.ts` and `ARCHITECTURE.md` now state the `'absolute'` origin.
+
 ## 1.1.2
 
 A one-line `package.json` fix, and the line was a false statement about which Vue versions this

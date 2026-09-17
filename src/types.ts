@@ -219,6 +219,13 @@ export type TeleportToOptions = {
    *     positioned ancestor (its `offsetParent`). Use this when the host lives
    *     inside a scrolling parent and should track that parent's content.
    *
+   * In `'absolute'` mode the origin is that ancestor's PADDING box, in the
+   * ancestor's own scrolled content coordinates — its border widths
+   * (`clientTop` / `clientLeft`), its padding-box size (`clientWidth` /
+   * `clientHeight`) and its `scrollTop` / `scrollLeft` are all terms in the
+   * coordinates written. `position: relative` + `overflow: auto` on the same
+   * element is therefore a supported shape, and the common one.
+   *
    * In `'absolute'` mode, when no offsetParent is available (or the host is
    * not yet attached), the math falls back to viewport-relative coordinates
    * so detached/unmounted hosts do not throw.

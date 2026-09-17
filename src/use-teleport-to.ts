@@ -73,7 +73,8 @@ const sameStyles = (a: TeleportToStyles, b: TeleportToStyles): boolean => {
 
 export type UseTeleportToReturn = {
   /** Inline styles to bind via `:style="styles"`. Empty object until the first
-   *  successful calculation (or after `enabled: false` is applied). */
+   *  successful calculation, and again whenever the composable goes dormant —
+   *  `enabled: false`, or a `to` that resolves to null/detached. */
   styles: Ref<TeleportToStyles>
   /** Chosen placement after the most recent calculation, or `null` if disabled
    *  or if the reference element is missing/detached. */
@@ -200,6 +201,47 @@ export function useTeleportTo(
     scrollTargets = next
   }
 
+  /**
+   * Every output back to its dormant value — the composable's whole answer to
+   * "this host is not being positioned right now".
+   *
+   * ONE function for BOTH dormant branches (`enabled: false` and a `to` that
+   * resolves to null/detached), because they are the same state and listing
+   * them twice is how they drifted: the detached branch reset seven of the
+   * thirteen and left `styles` untouched, so a host hidden by
+   * `hideWhenReferenceHidden` on the previous tick stayed `visibility: hidden`
+   * in the record the consumer binds while `hidden` reported `false` — an
+   * invisible popover with every signal saying it was fine. It is the
+   * composable's equivalent of the directive's `releaseHide` +
+   * `clearPositionAttributes`, and the reason it can go further than the
+   * directive (which leaves `el.style.top` where it was) is that the record IS
+   * ours: `{}` is the honest way to say we are asserting nothing.
+   *
+   * `styles` is compared before assigning — `{}` is a fresh object every time,
+   * and a ref handed a new object always triggers. Assigning unconditionally
+   * is enough on its own to make the post-render re-measure recurse forever on
+   * a host that is merely disabled.
+   */
+  const goDormant = (): void => {
+    if (Object.keys(styles.value).length > 0) styles.value = {}
+    placement.value = null
+    availableSpace.value = 0
+    oppositeSpace.value = 0
+    fit.value = 'unmeasured'
+    maxHeight.value = 0
+    collapsed.value = false
+    truncated.value = false
+    contentWidth.value = null
+    contentHeight.value = null
+    referenceHidden.value = false
+    hidden.value = false
+    state.value = 'closed'
+    prevPlacement = null
+    // Drop any auto-update observers: a dormant host keeps no subscription on
+    // an element it is no longer tracking.
+    disconnectObservers(observers)
+  }
+
   const update = (): void => {
     const opts = toValue(options)
     if (!opts) return
@@ -210,26 +252,7 @@ export function useTeleportTo(
     syncScrollTargets(opts)
 
     if (opts.enabled === false) {
-      // Compared, not assigned — `{}` is a fresh object every time, and a ref
-      // handed a new object always triggers. Assigning unconditionally here is
-      // enough on its own to make the post-render re-measure below recurse
-      // forever on a host that is merely disabled.
-      if (Object.keys(styles.value).length > 0) styles.value = {}
-      placement.value = null
-      availableSpace.value = 0
-      oppositeSpace.value = 0
-      fit.value = 'unmeasured'
-      maxHeight.value = 0
-      collapsed.value = false
-      truncated.value = false
-      contentWidth.value = null
-      contentHeight.value = null
-      referenceHidden.value = false
-      hidden.value = false
-      state.value = 'closed'
-      prevPlacement = null
-      // Drop any auto-update observers while disabled.
-      disconnectObservers(observers)
+      goDormant()
       return
     }
 
@@ -237,20 +260,7 @@ export function useTeleportTo(
     // render pass — the normal path — re-run this effect once Vue populates it.
     const result = computePositionStyles(opts, toValue(host))
     if (!result) {
-      // No reference means no measurement — and the directive's matching
-      // branch releases any hide it applied, so the composable reports the
-      // same "not hidden by us" answer rather than a stale `true`.
-      collapsed.value = false
-      truncated.value = false
-      contentWidth.value = null
-      contentHeight.value = null
-      referenceHidden.value = false
-      hidden.value = false
-      state.value = 'closed'
-      prevPlacement = null
-      // `to` is missing/detached — drop observers so we don't keep a stale
-      // subscription on an element no longer in play.
-      disconnectObservers(observers)
+      goDormant()
       return
     }
 

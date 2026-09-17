@@ -166,11 +166,47 @@ export function computePositionStyles(
     const op = hostEl.offsetParent as HTMLElement | null
     if (op && op.isConnected) {
       const opRect = op.getBoundingClientRect()
+      // The containing block for an absolutely-positioned child is the
+      // offsetParent's PADDING box, laid out in that parent's SCROLLED content
+      // coordinates — and `getBoundingClientRect()` returns neither. It returns
+      // the BORDER box, unscrolled. Three terms close the gap, all of them
+      // measured in Chrome rather than reasoned about:
+      //
+      //   - `clientTop` / `clientLeft` — the top/left border widths. A `top: 0`
+      //     child starts below the border, not at the rect's edge.
+      //   - `scrollTop` / `scrollLeft` — the parent's own scroll. Absolutely
+      //     positioned children scroll WITH the content, so the origin moves up
+      //     and left as the parent scrolls. This is the term that hurt: a
+      //     dropdown inside a pane scrolled 450px landed 438px above its
+      //     trigger, which is the documented use case for this strategy
+      //     ("the host lives inside a scrolling parent").
+      //   - `clientWidth` / `clientHeight` for the far edges, NOT
+      //     `rect.right - borderRight`. With a 17px classic scrollbar a
+      //     `right: 0` child's right edge lands at `left + clientLeft +
+      //     clientWidth` — behind the scrollbar — 17px inside the padding edge
+      //     the border box implies.
+      //
+      // ONE exception to the scroll term: when the offsetParent IS the
+      // document's scrolling element, its own rect already moves with the page
+      // scroll, so subtracting its `scrollTop` again double-counts it. That is
+      // not hypothetical — it is every QUIRKS-mode document
+      // (`document.compatMode === 'BackCompat'`), where `document.body` is
+      // both the viewport scroller and the offsetParent of any statically
+      // positioned host. Measured in Chrome on a page scrolled 1200px: without
+      // this the host lands 1192px below its reference. In a standards-mode
+      // document the scrolling element is `<html>`, which is never an
+      // `offsetParent`, so the guard costs one identity comparison and changes
+      // nothing.
+      const scrollsTheViewport = op === document.scrollingElement
+      const scrollTop = scrollsTheViewport ? 0 : op.scrollTop
+      const scrollLeft = scrollsTheViewport ? 0 : op.scrollLeft
+      const originTop = opRect.top + op.clientTop - scrollTop
+      const originLeft = opRect.left + op.clientLeft - scrollLeft
       offsetParentRect = {
-        top: opRect.top,
-        left: opRect.left,
-        right: opRect.right,
-        bottom: opRect.bottom,
+        top: originTop,
+        left: originLeft,
+        right: originLeft + op.clientWidth,
+        bottom: originTop + op.clientHeight,
       }
     }
   }
