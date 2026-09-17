@@ -1,10 +1,16 @@
 # Changelog
 
+## 1.1.4 — 2026-09-18
+
+Documentation only; no code change. The README is cut to a landing page — problem, solution,
+install, a couple of usage examples — because the playground now carries the reference: every
+option driven in a real browser rather than described in a table. Claims that could not be
+verified against the source were deleted rather than carried across.
+
 ## 1.1.3
 
 Two defects in code paths the unit suite could only ever stub, and one gate that could not fail.
-`1.1.3` is not published — the registry's `latest` is 1.1.2 as this is written, and everything
-below is in the working tree only.
+`1.1.3` was published on 2026-09-17, superseding 1.1.2.
 
 Both fixes are certified in Chrome, not in jsdom, because jsdom is structurally unable to see
 either of them: it has no layout, so `clientTop`, `clientWidth` and `scrollTop` all read `0` on
