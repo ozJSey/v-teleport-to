@@ -147,8 +147,24 @@ export function computePositionStyles(
   const isVirtual = isVirtualReference(parentRef)
   if (!isVirtual && !(parentRef as HTMLElement).isConnected) return null
 
-  const windowHeight = window.innerHeight
-  const windowWidth = window.innerWidth
+  // The LAYOUT viewport, not the window.
+  //
+  // `window.innerWidth` counts the classic scrollbar; `documentElement
+  // .clientWidth` does not. It matters because a fixed element's `right` /
+  // `bottom` are resolved by the browser against the layout viewport, so an
+  // offset computed from `innerWidth` paints one scrollbar-width short of
+  // where it was asked to go.
+  //
+  // Invisible on macOS, where overlay scrollbars make the two identical —
+  // which is why it shipped. Linux CI reported `viewport 1280px (layout
+  // 1265px, scrollbar 15px)` and four browser checks each off by exactly 15px.
+  // This file already applies the rule to the offsetParent a few lines below,
+  // in a comment naming the same trap; it was never applied to the viewport.
+  //
+  // `||` not `??`: a detached or exotic document can report 0, and 0 is not a
+  // viewport — fall back to the window rather than clamp everything to nothing.
+  const windowHeight = document.documentElement?.clientHeight || window.innerHeight
+  const windowWidth = document.documentElement?.clientWidth || window.innerWidth
 
   // Resolve the coordinate origin. For `position: fixed`, coordinates are
   // viewport-relative — emulated by a synthetic rect at (0,0)–(W,H). For

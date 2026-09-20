@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { createApp, defineComponent, h, nextTick, ref } from 'vue'
+import { createApp, defineComponent, effectScope, h, nextTick, ref } from 'vue'
 import { useTeleportTo } from './vTeleportTo'
 
 /**
@@ -183,5 +183,77 @@ describe('the render loop card 11 hit in CI', () => {
 
     expect(bail, `Vue bailed out of the render loop:\n${bail[0] ?? ''}`).toHaveLength(0)
     expect(reads(), 'layout reads for one mount with no user input').toBeLessThan(40)
+  })
+})
+
+/**
+ * The far edges of the viewport are the LAYOUT viewport, not the window.
+ *
+ * `window.innerWidth` counts the classic scrollbar; `documentElement.clientWidth`
+ * does not. On macOS the two are identical — overlay scrollbars occupy no
+ * space — which is exactly why this shipped: every machine it was written and
+ * tested on reported one number for both.
+ *
+ * Linux CI reported the other. `viewport 1280px (layout 1265px, scrollbar
+ * 15px)`, and four browser checks each off by exactly 15px: a host clamped to
+ * the right edge lands that far outside the area the user can see, tucked
+ * under the scrollbar. The same file already applies this rule to the
+ * offsetParent, in a comment naming the trap — "`clientWidth` / `clientHeight`
+ * for the far edges, NOT ... behind the scrollbar" — and never applied it to
+ * the viewport itself.
+ */
+describe('the viewport is the layout viewport', () => {
+  it('a host clamped to the right edge respects the scrollbar', () => {
+    const SCROLLBAR = 15
+    Object.defineProperty(document.documentElement, 'clientWidth', {
+      get: () => window.innerWidth - SCROLLBAR,
+      configurable: true,
+    })
+    const usable = document.documentElement.clientWidth
+    expect(usable).toBe(window.innerWidth - SCROLLBAR)
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    hosts.push(host)
+    const HOST_W = 300
+    Object.defineProperty(host, 'offsetWidth', { get: () => HOST_W, configurable: true })
+    Object.defineProperty(host, 'offsetHeight', { get: () => 80, configurable: true })
+    host.getBoundingClientRect = () =>
+      ({ top: 0, left: 0, width: HOST_W, height: 80, right: HOST_W, bottom: 80,
+         x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+
+    // Hard against the right edge: the clamp must pull the host back inside.
+    // Relative to the LAYOUT viewport: a reference under the scrollbar is not a
+    // geometry any real page produces.
+    const refLeft = usable - 120
+    const reference = document.createElement('div')
+    document.body.appendChild(reference)
+    hosts.push(reference)
+    reference.getBoundingClientRect = () =>
+      ({ top: 300, left: refLeft, width: 100, height: 40, right: refLeft + 100, bottom: 340,
+         x: refLeft, y: 300, toJSON: () => ({}) }) as DOMRect
+
+    const scope = effectScope()
+    const styles = scope.run(() =>
+      useTeleportTo(() => ({ to: reference, placement: 'bottom' as const, overflow: 'shift' as const }), () => host),
+    )!.styles
+    // Past the right-anchor threshold the library writes `right`, not `left`.
+    // The browser resolves a fixed element's `right` against the LAYOUT
+    // viewport, so the host's painted right edge is `clientWidth - right`. If
+    // the library computed that offset from `innerWidth`, the edge lands one
+    // scrollbar short of the reference — which is the `right weld -15px` CI
+    // reports on every one of these four checks.
+    const written = { ...styles.value }
+    const R = Number.parseFloat(String(written.right ?? 'NaN'))
+    scope.stop()
+
+    expect(Number.isFinite(R), `expected a right-anchored host, got ${JSON.stringify(written)}`).toBe(true)
+    const paintedRight = usable - R
+    const referenceRight = refLeft + 100
+    expect(
+      Math.round(paintedRight - referenceRight),
+      `host painted right edge ${paintedRight} vs reference right ${referenceRight} — ` +
+        `right offset written ${R}, layout viewport ${usable}, window ${window.innerWidth}`,
+    ).toBe(0)
   })
 })

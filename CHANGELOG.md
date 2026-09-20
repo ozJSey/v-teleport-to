@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.1.7 — 2026-09-20
+
+Every right-anchored popover was one scrollbar-width too far right on Windows and Linux.
+
+### Fixed
+
+- **The viewport was measured with `window.innerWidth` / `innerHeight`, which count the classic
+  scrollbar.** A fixed element's `right` and `bottom` are resolved by the browser against the
+  LAYOUT viewport, which does not — so an offset computed from the window paints one
+  scrollbar-width short of where it was asked to go. Anything anchored to the right or bottom edge
+  landed partly under the scrollbar.
+
+  Invisible on macOS, where overlay scrollbars make the two numbers identical. That is why it
+  shipped, and why every local run — unit, browser, by hand — agreed it was fine.
+
+  Found by the daily workflow on Linux: `viewport 1280px (layout 1265px, scrollbar 15px)`, with
+  four independent browser checks each reporting a weld error of exactly **-15px**. The diagnostic
+  that produced those numbers was added deliberately instead of a speculative fix, because 1.1.5
+  was a speculative fix and it made things worse.
+
+  The same file already applied this rule to the offsetParent, in a comment naming the trap —
+  "`clientWidth` / `clientHeight` for the far edges, NOT ... behind the scrollbar". It was never
+  applied to the viewport itself.
+
+  `||` rather than `??` on the fallback: a detached or exotic document reports 0, and 0 is not a
+  viewport — fall back to the window rather than clamp everything to nothing.
+
+  Pinned by a test that reproduces the exact CI number: with the fix reverted it reports
+  `expected -15 to be +0`. 878/878.
+
 ## 1.1.6 — 2026-09-20
 
 **1.1.5 did not fix the render loop, and part of it made the loop easier to reach.** Caught by the
