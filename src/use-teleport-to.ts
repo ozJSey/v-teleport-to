@@ -65,6 +65,33 @@ import type { TeleportToFit, TeleportToOptions, TeleportToSide } from './types'
  * scroll or resize that does not move the host cost zero re-renders, which the
  * directive got for free by writing `el.style` directly.
  */
+/**
+ * Sub-pixel jitter is not news, and propagating it is a render loop.
+ *
+ * Every scalar below is a float read off `getBoundingClientRect`, and each one
+ * is written to a ref the consumer may render. A ref assigned a value that
+ * differs in the ninth decimal place still triggers, still re-renders, and the
+ * re-render runs `onUpdated` → `update()` → another measurement. `sameStyles`
+ * guards `styles`; nothing guarded these, so a host whose height never settles
+ * exactly drove the component until Vue bailed out with "Maximum recursive
+ * updates exceeded" — observed on playground card 11 in CI against the
+ * published package, and reproduced here by a host that jitters by 0.001px.
+ *
+ * 0.05px is below anything a consumer can act on and far above the noise. A
+ * real move clears it on the first measurement; jitter never does.
+ */
+const MOVED_ENOUGH = 0.05
+const setIfMoved = (target: Ref<number>, next: number): void => {
+  if (Math.abs(target.value - next) >= MOVED_ENOUGH) target.value = next
+}
+const setNullableIfMoved = (target: Ref<number | null>, next: number | null): void => {
+  if (target.value === null || next === null) {
+    if (target.value !== next) target.value = next
+    return
+  }
+  if (Math.abs(target.value - next) >= MOVED_ENOUGH) target.value = next
+}
+
 const sameStyles = (a: TeleportToStyles, b: TeleportToStyles): boolean => {
   const keys = Object.keys(a) as (keyof TeleportToStyles)[]
   if (keys.length !== Object.keys(b).length) return false
@@ -268,14 +295,14 @@ export function useTeleportTo(
     // re-measure below only terminates because an unchanged answer is silent.
     if (!sameStyles(styles.value, result.styles)) styles.value = result.styles
     placement.value = result.detail.placement
-    availableSpace.value = result.detail.availableSpace
-    oppositeSpace.value = result.detail.oppositeSpace
+    setIfMoved(availableSpace, result.detail.availableSpace)
+    setIfMoved(oppositeSpace, result.detail.oppositeSpace)
     fit.value = result.detail.fit
-    maxHeight.value = result.detail.maxHeight
+    setIfMoved(maxHeight, result.detail.maxHeight)
     collapsed.value = result.detail.collapsed
     truncated.value = result.detail.truncated
-    contentWidth.value = result.detail.contentWidth
-    contentHeight.value = result.detail.contentHeight
+    setNullableIfMoved(contentWidth, result.detail.contentWidth)
+    setNullableIfMoved(contentHeight, result.detail.contentHeight)
     referenceHidden.value = result.detail.referenceHidden
     hidden.value = result.detail.hidden
     state.value = 'open'

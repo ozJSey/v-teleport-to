@@ -36,7 +36,7 @@ export default defineWorkspace([
     test: {
       name: 'vue-3.5',
       environment: 'jsdom',
-      include: ['vTeleportTo.test.ts', 'playground.smoke.test.ts'],
+      include: ['vTeleportTo.test.ts', 'vTeleportTo.convergence.test.ts', 'playground.smoke.test.ts'],
     },
   },
   {
@@ -48,7 +48,7 @@ export default defineWorkspace([
     test: {
       name: 'vue-floor-3.3.0',
       environment: 'jsdom',
-      include: ['vTeleportTo.test.ts', 'playground.smoke.test.ts'],
+      include: ['vTeleportTo.test.ts', 'vTeleportTo.convergence.test.ts', 'playground.smoke.test.ts'],
     },
   },
   {

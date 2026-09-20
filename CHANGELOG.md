@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.1.5 — 2026-09-20
+
+A render loop in `useTeleportTo` that locks the page. Present in every released version of the
+composable; found on the live documentation site, not in a unit test.
+
+### Fixed
+
+- **A host whose measured height never settles drove the owning component until Vue bailed out**
+  with *"Maximum recursive updates exceeded"*. The page stops responding; the popover is stuck
+  wherever the last pass left it.
+
+  `update()` writes thirteen outputs. `styles` was compared before assigning — `sameStyles` — and
+  the remaining twelve were assigned unconditionally. Five of those are floats read straight off
+  `getBoundingClientRect`: `availableSpace`, `oppositeSpace`, `maxHeight`, `contentWidth`,
+  `contentHeight`. A ref assigned a value differing in the ninth decimal place still triggers, so
+  a consumer rendering any of them re-rendered, the re-render ran the `onUpdated` path, that
+  measured again, and the next measurement differed again.
+
+  The module's own comment set out why the update paths terminate — "this only converges because
+  the second pass over an unchanged DOM produces an equal record and `sameStyles` swallows it" —
+  and named the consequence if the invariant were ever weakened. It was weaker than the comment
+  assumed all along: `sameStyles` only ever guarded one of the thirteen.
+
+  Those five now write only when the value moves by at least 0.05px, which is below anything a
+  consumer can act on and far above the noise. A real move clears it on the first measurement;
+  jitter never does. `placement`, `fit`, `collapsed`, `truncated`, `referenceHidden`, `hidden` and
+  `state` are unchanged — Vue already swallows an identical primitive.
+
+  Caught by playground card 11 in the daily workflow on Linux, five times a run, against the
+  **published** package; it does not reproduce on macOS, which is what a measurement sitting on a
+  fractional-pixel boundary looks like. `vTeleportTo.convergence.test.ts` pins the mechanism
+  rather than that geometry: a host that jitters by 0.001px reproduces the bail-out exactly, and
+  the test also fails on read count alone, so it still detects the loop if Vue ever stops
+  counting. The new file is registered in `vitest.workspace.ts`, whose `include` is an allowlist —
+  a test file that is not named there does not run, and does not say so.
+
 ## 1.1.4 — 2026-09-18
 
 Documentation only; no code change. The README is cut to a landing page — problem, solution,
