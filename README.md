@@ -22,9 +22,10 @@ test, and a re-measure on every frame of both — for every popover on the page.
 
 ## The solution
 
-One binding on the host, naming the element it should follow. The math reads only the reference's
-`getBoundingClientRect()` — never any ancestor's overflow or clip styles — and writes viewport
-coordinates under `position: fixed`, which is exactly why the host escapes those ancestors.
+One binding on the host, naming the element it should follow. The math reads rects — the
+reference's, and the host's own when it has to answer a fit question — but never any ancestor's
+overflow or clip styles, and it writes viewport coordinates under `position: fixed`, which is
+exactly why the host escapes those ancestors.
 
 ```vue
 <button ref="trigger">Open</button>

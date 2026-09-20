@@ -36,6 +36,13 @@ composable; found on the live documentation site, not in a unit test.
   counting. The new file is registered in `vitest.workspace.ts`, whose `include` is an allowlist —
   a test file that is not named there does not run, and does not say so.
 
+- **"The math reads only the reference's `getBoundingClientRect()`"** — it reads the host's own rect
+  too, on every calculation that has to answer a fit question (`measure-host.ts`, documented there as
+  "one extra forced layout per tick"), plus the boundary element's rect when `boundary` is an
+  element and the offsetParent's under `strategy: 'absolute'`. The load-bearing half of the sentence
+  — that no ancestor's overflow or clip styles are read, which is why `position: fixed` escapes them
+  — is true and tested. The word "only" was the defect.
+
 ## 1.1.4 — 2026-09-18
 
 Documentation only; no code change. The README is cut to a landing page — problem, solution,
