@@ -81,15 +81,25 @@ import type { TeleportToFit, TeleportToOptions, TeleportToSide } from './types'
  * real move clears it on the first measurement; jitter never does.
  */
 const MOVED_ENOUGH = 0.05
-const setIfMoved = (target: Ref<number>, next: number): void => {
-  if (Math.abs(target.value - next) >= MOVED_ENOUGH) target.value = next
-}
-const setNullableIfMoved = (target: Ref<number | null>, next: number | null): void => {
-  if (target.value === null || next === null) {
-    if (target.value !== next) target.value = next
-    return
-  }
-  if (Math.abs(target.value - next) >= MOVED_ENOUGH) target.value = next
+
+/**
+ * Compared against a PLAIN shadow, never against `target.value`.
+ *
+ * 1.1.5 wrote these as `if (Math.abs(target.value - next) >= MOVED_ENOUGH)`,
+ * which reads the ref inside the effect that writes it — so the threshold that
+ * was meant to stop a loop quietly added five new self-dependencies to the two
+ * `watchEffect`s. Before 1.1.5 these five were written unconditionally and were
+ * not tracked at all; afterwards, every one of them could re-trigger the effect
+ * that produced it. The fix made the reactive graph worse while making the
+ * numbers better, and CI kept bailing out.
+ *
+ * The shadow mirrors exactly what was last written, so the comparison is
+ * identical and nothing subscribes to its own output.
+ */
+const movedEnough = (previous: number | null | undefined, next: number | null): boolean => {
+  if (previous === undefined) return true
+  if (previous === null || next === null) return previous !== next
+  return Math.abs(previous - next) >= MOVED_ENOUGH
 }
 
 const sameStyles = (a: TeleportToStyles, b: TeleportToStyles): boolean => {
@@ -179,6 +189,32 @@ export type UseTeleportToReturn = {
   update: () => void
 }
 
+/**
+ * How many times the RENDER path may recompute and produce a different answer
+ * before the composable stops listening to it.
+ *
+ * Paths (2) and (3) write `styles`, the consumer binds it, that renders, and
+ * rendering runs (3) again. The module's own note says this "only converges
+ * because the second pass over an unchanged DOM produces an equal record" —
+ * true, and it means convergence is a property of the CONSUMER'S geometry, not
+ * of this code. When that geometry oscillates, the loop does not terminate and
+ * Vue bails out with "Maximum recursive updates exceeded", taking the page with
+ * it.
+ *
+ * 1.1.5 guarded the float outputs against sub-pixel jitter, which was one
+ * source and not the only one: a genuine A-to-B oscillation is not noise and
+ * passes any threshold untouched. So the render path is bounded instead. Ten
+ * is far above any real correction — a mount settles in two or three — and far
+ * below Vue's own limit, so this fires first and says something useful.
+ *
+ * Reaching it is not an error in the consumer's code that they can be expected
+ * to fix blind, and it is not fatal: the popover keeps its last position, every
+ * other update path still works, and a scroll, a resize, an option change or an
+ * explicit `update()` all clear the block. A popover that stops adjusting is a
+ * cosmetic problem. A page that stops responding is not.
+ */
+const MAX_RENDER_PASSES = 10
+
 export function useTeleportTo(
   options: MaybeRefOrGetter<TeleportToOptions>,
   host?: MaybeRefOrGetter<HTMLElement | null | undefined>,
@@ -250,7 +286,10 @@ export function useTeleportTo(
    * a host that is merely disabled.
    */
   const goDormant = (): void => {
-    if (Object.keys(styles.value).length > 0) styles.value = {}
+    if (Object.keys(writtenStyles).length > 0) {
+      writtenStyles = {}
+      styles.value = {}
+    }
     placement.value = null
     availableSpace.value = 0
     oppositeSpace.value = 0
@@ -269,7 +308,52 @@ export function useTeleportTo(
     disconnectObservers(observers)
   }
 
-  const update = (): void => {
+  let renderPasses = 0
+  let warnedAboutLoop = false
+  /**
+   * The last styles written, held OUTSIDE the reactive graph.
+   *
+   * `update()` used to compare against `styles.value`, which made `styles` a
+   * dependency of the two `watchEffect`s that write it. Writing a different
+   * record re-triggered the post-flush effect, which recomputed, which wrote
+   * again — a loop that bypasses the render path entirely, so bounding
+   * `onUpdated` alone does not touch it. The comparison is the same; it just
+   * no longer subscribes to its own output.
+   */
+  let writtenStyles: TeleportToStyles = {}
+  /** Plain mirrors of the five float outputs. See `movedEnough`. */
+  const written: {
+    availableSpace?: number
+    oppositeSpace?: number
+    maxHeight?: number
+    contentWidth?: number | null
+    contentHeight?: number | null
+  } = {}
+
+  const update = (fromRender = false): void => {
+    if (fromRender) {
+      if (renderPasses >= MAX_RENDER_PASSES) {
+        if (!warnedAboutLoop) {
+          warnedAboutLoop = true
+          console.warn(
+            '[useTeleportTo] stopped recomputing from the render path: the position did not ' +
+              `settle in ${MAX_RENDER_PASSES} passes, so something is feeding this host's own ` +
+              'output back into its measurement. Common causes: a stylesheet keyed on ' +
+              '`data-teleport-fit` or `data-teleport-state` that changes the host\'s size, or a ' +
+              'reference whose position depends on the popover. The host keeps its last position; ' +
+              'a scroll, a resize, an option change or update() will resume it.',
+          )
+        }
+        return
+      }
+      renderPasses += 1
+    } else {
+      // Anything that is not the render path is real news — an option changed,
+      // an observer fired, the consumer asked. It clears the block.
+      renderPasses = 0
+      warnedAboutLoop = false
+    }
+
     const opts = toValue(options)
     if (!opts) return
 
@@ -293,16 +377,34 @@ export function useTeleportTo(
 
     // Compared, not merely assigned — see `sameStyles`. The post-render
     // re-measure below only terminates because an unchanged answer is silent.
-    if (!sameStyles(styles.value, result.styles)) styles.value = result.styles
+    if (!sameStyles(writtenStyles, result.styles)) {
+      writtenStyles = result.styles
+      styles.value = result.styles
+    }
     placement.value = result.detail.placement
-    setIfMoved(availableSpace, result.detail.availableSpace)
-    setIfMoved(oppositeSpace, result.detail.oppositeSpace)
+    if (movedEnough(written.availableSpace, result.detail.availableSpace)) {
+      written.availableSpace = result.detail.availableSpace
+      availableSpace.value = result.detail.availableSpace
+    }
+    if (movedEnough(written.oppositeSpace, result.detail.oppositeSpace)) {
+      written.oppositeSpace = result.detail.oppositeSpace
+      oppositeSpace.value = result.detail.oppositeSpace
+    }
     fit.value = result.detail.fit
-    setIfMoved(maxHeight, result.detail.maxHeight)
+    if (movedEnough(written.maxHeight, result.detail.maxHeight)) {
+      written.maxHeight = result.detail.maxHeight
+      maxHeight.value = result.detail.maxHeight
+    }
     collapsed.value = result.detail.collapsed
     truncated.value = result.detail.truncated
-    setNullableIfMoved(contentWidth, result.detail.contentWidth)
-    setNullableIfMoved(contentHeight, result.detail.contentHeight)
+    if (movedEnough(written.contentWidth, result.detail.contentWidth)) {
+      written.contentWidth = result.detail.contentWidth
+      contentWidth.value = result.detail.contentWidth
+    }
+    if (movedEnough(written.contentHeight, result.detail.contentHeight)) {
+      written.contentHeight = result.detail.contentHeight
+      contentHeight.value = result.detail.contentHeight
+    }
     referenceHidden.value = result.detail.referenceHidden
     hidden.value = result.detail.hidden
     state.value = 'open'
@@ -392,7 +494,7 @@ export function useTeleportTo(
   }
   watchEffect(recalc, { flush: 'sync' })
   watchEffect(recalc, { flush: 'post' })
-  if (getCurrentInstance()) onUpdated(update)
+  if (getCurrentInstance()) onUpdated(() => update(true))
 
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', schedule, { passive: true })

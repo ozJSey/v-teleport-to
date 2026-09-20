@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.1.6 — 2026-09-20
+
+**1.1.5 did not fix the render loop, and part of it made the loop easier to reach.** Caught by the
+same playground card, in the same daily workflow, against the published 1.1.5.
+
+### Fixed
+
+- **`useTeleportTo` could still lock the page**, with Vue bailing out on "Maximum recursive updates
+  exceeded". Two causes, and the first is a regression introduced by the previous release.
+
+  **1.1.5 added five self-dependencies.** Its movement threshold was written as
+  `if (Math.abs(target.value - next) >= 0.05)`, which READS the ref inside the effect that writes
+  it. Before 1.1.5 those five floats were assigned unconditionally and were not tracked at all;
+  afterwards each one could re-trigger the `watchEffect` that produced it. The numbers got better
+  and the reactive graph got worse. The same was already true of `styles`, compared against
+  `styles.value` since the beginning. All six now compare against plain mirrors held outside the
+  reactive graph — identical comparisons, no subscription to their own output.
+
+  **And the render path is now bounded.** Even with no self-dependency, the consumer closes a loop
+  the library cannot see: it binds `styles`, that renders, rendering runs the `onUpdated` path,
+  which measures and writes again. The module's own note said this "only converges because the
+  second pass over an unchanged DOM produces an equal record" — which makes convergence a property
+  of the CONSUMER'S geometry, not of this code. When that geometry oscillates rather than jitters,
+  no threshold helps: an A-to-B alternation is not noise. After ten render-driven passes without
+  settling, the composable stops recomputing from that path and says so once, naming the likely
+  causes. The host keeps its last position; a scroll, a resize, an option change or an explicit
+  `update()` clears the block.
+
+  Both are load-bearing and that is verified rather than assumed: with the bound removed the
+  oscillation test fails again, and with the self-dependencies restored it fails too.
+
+  `vTeleportTo.convergence.test.ts` now covers both shapes — a host that jitters by 0.001px, and
+  one that alternates 120/300 across the clamp. The second is the one 1.1.5 shipped through.
+
 ## 1.1.5 — 2026-09-20
 
 A render loop in `useTeleportTo` that locks the page. Present in every released version of the

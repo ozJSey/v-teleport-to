@@ -5,7 +5,7 @@ autocomplete lists that escape the overflow and clip containers they are rendere
 
 [![npm](https://img.shields.io/npm/v/@ozjsey/v-teleport-to.svg)](https://www.npmjs.com/package/@ozjsey/v-teleport-to)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![gzipped 4.46 KiB](https://img.shields.io/badge/gzipped-4.46%20KiB-blue.svg)
+![gzipped 4.81 KiB](https://img.shields.io/badge/gzipped-4.81%20KiB-blue.svg)
 ![dependencies 0](https://img.shields.io/badge/dependencies-0-blue.svg)
 
 **[See it running, and edit it in the browser →](https://ozjsey.github.io/npm-portfolio-playground/#v-teleport-to)**

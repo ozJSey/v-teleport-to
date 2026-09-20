@@ -114,6 +114,39 @@ function mountCard(host: HTMLElement, reference: HTMLElement) {
   return app
 }
 
+/**
+ * A host whose measurement genuinely ALTERNATES, rather than jittering.
+ *
+ * 1.1.5 guarded the five float outputs with a 0.05px movement threshold, which
+ * kills sub-pixel noise — and that was not enough: CI still bailed out on card
+ * 11 against the published 1.1.5. A real A-to-B oscillation is not noise, so
+ * it passes the threshold untouched and changes `maxHeight`, `fit`,
+ * `truncated` and `styles` on every pass.
+ *
+ * The source does not matter, and that is the point of fixing it here. It
+ * could be a flip decision with no hysteresis (`prevPlacement` feeds the
+ * onPlacementChange callback, never the decision), a clamp that changes the
+ * answer it was derived from, or a consumer stylesheet keyed on
+ * `data-teleport-fit`. Whatever oscillates, the library must not lock the
+ * page: it is a popover, and the worst honest outcome is that it stops
+ * adjusting and says so.
+ */
+function oscillatingHost(): { el: HTMLElement; reads: () => number } {
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  hosts.push(el)
+  let reads = 0
+  el.getBoundingClientRect = () => {
+    reads += 1
+    // 120 and 300 straddle the 240 clamp, so every pass flips the verdict.
+    const height = reads % 2 === 0 ? 120 : 300
+    return { top: 0, left: 0, width: 200, height, right: 200, bottom: height, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+  }
+  Object.defineProperty(el, 'offsetHeight', { get: () => (reads % 2 === 0 ? 120 : 300), configurable: true })
+  Object.defineProperty(el, 'offsetWidth', { get: () => 200, configurable: true })
+  return { el, reads: () => reads }
+}
+
 describe('the render loop card 11 hit in CI', () => {
   it('a measurement that never settles does not recurse without bound', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -134,5 +167,21 @@ describe('the render loop card 11 hit in CI', () => {
     // The real assertion. A handful of measurements is a correction; hundreds
     // is the loop, whether or not Vue's counter happened to trip first.
     expect(reads(), 'layout reads taken for one mount with no user input').toBeLessThan(40)
+  })
+
+  it('an oscillating measurement cannot lock the page either', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { el, reads } = oscillatingHost()
+    const app = mountCard(el, makeRef(100))
+
+    for (let i = 0; i < 5; i++) await nextTick()
+
+    const bail = warn.mock.calls
+      .map((c) => c.join(' '))
+      .filter((m) => /Maximum recursive updates/.test(m))
+    app.unmount()
+
+    expect(bail, `Vue bailed out of the render loop:\n${bail[0] ?? ''}`).toHaveLength(0)
+    expect(reads(), 'layout reads for one mount with no user input').toBeLessThan(40)
   })
 })
